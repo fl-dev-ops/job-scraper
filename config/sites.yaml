@@ -1,0 +1,11 @@
+# Index of per-site config files.
+# Each site has its own file; add a new entry here when adding a new site.
+#
+# Loader pattern (in base.py):
+#   config = load_site_config("naukri")
+#   → reads config/naukri.yaml
+
+sites:
+  - naukri    # config/naukri.yaml
+  - indeed    # config/indeed.yaml
+  - linkedin  # config/linkedin.yaml

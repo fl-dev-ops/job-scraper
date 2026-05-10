@@ -1,0 +1,42 @@
+# Naukri.com scraper configuration
+# All delays in seconds. All selectors are CSS unless prefixed with "xpath:".
+
+base_url: "https://www.naukri.com"
+# {query} replaced with hyphenated query (e.g. "fresher-software-engineer")
+# experience=0&experienceMax=2 → 0–2 years; freshness=1 → posted recently
+# The fetcher appends "-in-{location}" to the path when location is set.
+search_url: "https://www.naukri.com/{query}-jobs?experience=0&experienceMax=2&freshness=1"
+
+queries:
+  - "fresher software engineer"
+  - "junior frontend developer react"
+  - "junior backend developer"
+  - "junior full stack developer"
+  - "SDE trainee"
+  - "graduate engineer trainee"
+  - "junior android developer"
+  - "junior data engineer"
+  - "junior devops engineer"
+
+experience_filter: "0,2"   # Naukri URL param range
+
+# Selectors used ONLY for navigation and JD text extraction.
+# Field values (title, company, salary, etc.) are extracted by the LLM — not by CSS.
+selectors:
+  job_cards: "article.jobTuple"       # listing page: identifies each job card
+  job_link: "a.title"                  # href to JD detail page (within each card)
+  jd_body: "div.job-desc"             # JD container → stripped to plain text for LLM
+  pagination_next: "a.pagination-next" # next page button
+  # Location span in detail page header (CSS module class; substring match is stable)
+  location_selector: "span[class*='location']"
+
+# Extraction / pipeline knobs
+parallel_extractions: 5  # max concurrent LLM extraction tasks per query
+
+# Anti-detection knobs
+min_delay_seconds: 3
+max_delay_seconds: 8
+pages_per_session: 10    # restart browser every N pages
+headless: true
+block_resources: ["image", "font", "media"]
+proxy_url: null          # override with env NAUKRI_PROXY_URL

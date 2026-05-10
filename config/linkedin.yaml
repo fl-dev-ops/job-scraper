@@ -1,0 +1,54 @@
+# LinkedIn scraper configuration (guest / unauthenticated)
+# All delays in seconds. Selectors are CSS.
+
+base_url: "https://www.linkedin.com"
+# Guest jobs search URL — no login required.
+# f_E=2          → Entry Level seniority filter (LinkedIn's own classification)
+# f_TPR=r2592000 → posted in last 30 days
+# Location is appended in the fetcher; keywords goes via {query} placeholder.
+search_url: "https://www.linkedin.com/jobs/search?keywords={query}&location={location}&f_E=2%2C3&f_TPR=r2592000&position=1&pageNum=0"
+
+queries:
+  - "Fresher jobs"
+  - "software engineer"
+  - "frontend developer"
+  - "backend developer"
+  - "full stack developer"
+  - "android developer"
+  - "data engineer"
+  - "devops engineer"
+  - "associate software engineer"
+
+# Native LinkedIn Company filter. These are LinkedIn company IDs used in f_C.
+company_ids:
+  - "1586" # Amazon
+  - "1353" # TCS
+
+seniority_filter: "2%2C3" # f_E LinkedIn URL param — Entry level
+
+# Selectors for the GUEST view (not the logged-in app).
+# Used for navigation, JD body extraction, and deterministic top-card overrides.
+selectors:
+  job_cards: "ul.jobs-search__results-list > li"
+  job_link: "a.base-card__full-link"
+  # Detail-page JD body (guest)
+  jd_body: "div.show-more-less-html__markup"
+  # Header fields are in the guest top card, not reliably in the JD body.
+  title_selector: "h1.top-card-layout__title"
+  company_selector: "a.topcard__org-name-link"
+  location_selector: "span.topcard__flavor--bullet"
+
+# Extraction / pipeline knobs
+parallel_extractions: 5 # max concurrent LLM extraction tasks per query
+
+# Anti-detection knobs
+# headless=false: visible window is harder to fingerprint-detect than headless
+min_delay_seconds: 4
+max_delay_seconds: 10
+pages_per_session: 5
+headless: true # toggle to false if blocks intensify
+block_resources: ["image", "font", "media"]
+proxy_url: null # override with env LINKEDIN_PROXY_URL
+
+# LinkedIn-specific
+scroll_load_depth: 3000

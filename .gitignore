@@ -1,0 +1,26 @@
+.env
+.DS_Store
+.claude/settings.local.json
+.venv/
+.uv-cache/
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+*.egg-info/
+
+# scraped output — do not commit raw data
+data/jobs/
+data/**/*.zip
+output/
+error_logs/
+profiles/
+
+# downloaded browser/captcha extension artifacts
+extensions/
+
+# Playwright browser binaries (installed separately, not in repo)
+.playwright/

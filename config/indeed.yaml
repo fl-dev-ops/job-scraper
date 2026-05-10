@@ -1,0 +1,46 @@
+# Indeed India scraper configuration
+# All delays in seconds. All selectors are CSS unless prefixed with "xpath:".
+
+base_url: "https://in.indeed.com"
+# explvl=entry_level → entry-level seniority filter
+# fromage=30 → posted in last 30 days
+# l={location} → location filter (e.g. "Bangalore")
+search_url: "https://in.indeed.com/jobs?q={query}&l={location}&explvl=entry_level&fromage=30"
+
+queries:
+  - "junior software engineer"
+  - "entry level software developer"
+  - "fresher developer"
+  - "associate software engineer"
+  - "junior react developer"
+  - "junior python developer"
+  - "junior java developer"
+
+# Indeed supports company search via the query operator: company:"Company Name".
+company_names: []
+
+
+experience_filter: "entry_level" # explvl URL param
+
+# Selectors used ONLY for navigation and JD text extraction.
+# Field values (title, company, salary, etc.) are extracted by the LLM — not by CSS.
+selectors:
+  job_cards: "div.job_seen_beacon" # listing page: each job card
+  job_link: "a.jcs-JobTitle" # href to JD detail page
+  jd_body: "div#jobDescriptionText" # JD container → stripped to plain text for LLM
+  pagination_next: "a[data-testid='pagination-page-next']"
+  # Location shown in detail page header — extracted directly, not via LLM
+  location_selector: "div[data-testid='inlineHeader-companyLocation'], div.icl-u-xs-mt--xs"
+
+# Extraction / pipeline knobs
+parallel_extractions: 5  # max concurrent LLM extraction tasks per query
+
+# Anti-detection knobs
+min_delay_seconds: 4
+max_delay_seconds: 10
+captcha_solve_timeout_seconds: 90
+pages_per_session: 8
+headless: false
+profile: "indeed"
+block_resources: ["image", "font", "media"]
+proxy_url: null          # override with env INDEED_PROXY_URL

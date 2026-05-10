@@ -1,0 +1,60 @@
+[project]
+name = "job-scraper"
+version = "0.1.0"
+description = "CS graduate / early-career job scraper: Naukri, Indeed, LinkedIn"
+requires-python = ">=3.11"
+dependencies = [
+    # fetching & anti-detection
+    "botasaurus>=3.2.0",
+    "botasaurus-driver>=3.2.0",
+    # extraction & parsing
+    "crawl4ai>=0.4.0",
+    "litellm>=1.40.0",
+    "selectolax>=0.3.21",
+    # schema, config, IO
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0.2",
+    "python-dotenv>=1.0.1",
+    "tenacity>=8.3.0",
+    "structlog>=24.2.0",
+    "typer>=0.12.0",
+    "httpx>=0.28.1",
+    "seleniumbase>=4.48.4",
+]
+
+[project.scripts]
+job-scraper = "job_scraper.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/job_scraper"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+    "types-pyyaml>=6.0.12",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
