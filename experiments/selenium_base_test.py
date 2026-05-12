@@ -1,17 +1,24 @@
-"""Standalone SeleniumBase Cloudflare/Indeed validation script.
+"""Standalone Indeed probe using SeleniumBase Pure CDP + Chrome for Testing.
 
-Run after installing project dependencies:
-    uv run python selenium_base_test.py
-
-If local Chrome startup fails, try Chrome for Testing:
+Run:
     uv run sbase get cft
-    uv run python selenium_base_test.py --binary-location cft
+    uv run python experiments/selenium_base_test.py
+
+This uses a separate Chrome for Testing browser, not your normal Chrome app.
 """
 
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
+from pathlib import Path
+from urllib.parse import urljoin
+
+from job_scraper.utils.seleniumbase_compat import (
+    apply_mycdp_patches,
+    close_pure_cdp_browser,
+)
 
 DEFAULT_URL = (
     "https://in.indeed.com/jobs"
@@ -23,102 +30,104 @@ DEFAULT_URL = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Try SeleniumBase UC mode against an Indeed Cloudflare challenge."
-    )
-    parser.add_argument("--url", default=DEFAULT_URL, help="URL to open")
+    parser = argparse.ArgumentParser(description="Probe Indeed with SeleniumBase Pure CDP.")
+    parser.add_argument("--url", default=DEFAULT_URL, help="Indeed search URL to open")
     parser.add_argument(
-        "--mode",
-        choices=("cdp", "uc"),
-        default="cdp",
-        help="SeleniumBase anti-detection mode to test",
-    )
-    parser.add_argument(
-        "--reconnect-time",
-        type=float,
-        default=4,
-        help="Seconds SeleniumBase disconnects WebDriver in UC mode",
+        "--browser-path",
+        default="cft",
+        help='Chrome binary path, or "cft" for SeleniumBase Chrome for Testing.',
     )
     parser.add_argument(
         "--settle-time",
         type=float,
         default=8,
-        help="Seconds to wait after attempting the captcha click",
+        help="Seconds to wait after attempting the CAPTCHA click.",
     )
     parser.add_argument(
         "--captcha-attempts",
         type=int,
         default=2,
-        help="Number of SeleniumBase captcha click attempts",
+        help="Number of SeleniumBase CAPTCHA click attempts.",
     )
     parser.add_argument(
-        "--incognito",
+        "--headless",
         action="store_true",
-        help="Run the browser in incognito mode",
-    )
-    parser.add_argument(
-        "--binary-location",
-        default=None,
-        help='Browser binary path, or "cft" for Chrome for Testing after running `sbase get cft`',
-    )
-    parser.add_argument(
-        "--driver-version",
-        default=None,
-        help="Optional ChromeDriver/UC driver major version override",
+        help="Run headless. Not recommended for CAPTCHA debugging.",
     )
     return parser.parse_args()
+
+
+def chrome_for_testing_path() -> str:
+    from seleniumbase.core import browser_launcher
+
+    system = sys.platform
+    machine = platform.machine().lower()
+    if system == "darwin":
+        folder = "chrome-mac-arm64" if machine == "arm64" else "chrome-mac-x64"
+        binary = (
+            Path(browser_launcher.DRIVER_DIR_CFT)
+            / folder
+            / "Google Chrome for Testing.app"
+            / "Contents"
+            / "MacOS"
+            / "Google Chrome for Testing"
+        )
+    elif system.startswith("linux"):
+        binary = Path(browser_launcher.DRIVER_DIR_CFT) / "chrome-linux64" / "chrome"
+    elif system.startswith("win"):
+        folder = "chrome-win64" if "64" in machine else "chrome-win32"
+        binary = Path(browser_launcher.DRIVER_DIR_CFT) / folder / "chrome.exe"
+    else:
+        raise SystemExit(f"Unsupported platform for Chrome for Testing: {system}")
+
+    if not binary.exists():
+        raise SystemExit("Chrome for Testing is missing. Run: uv run sbase get cft")
+    return str(binary)
+
+
+def resolve_browser_path(browser_path: str) -> str:
+    if browser_path == "cft":
+        return chrome_for_testing_path()
+    path = Path(browser_path).expanduser()
+    if not path.exists():
+        raise SystemExit(f"Browser path does not exist: {path}")
+    return str(path)
 
 
 def main() -> int:
     args = parse_args()
 
     try:
-        from seleniumbase import SB
+        from seleniumbase import sb_cdp
     except ImportError:
-        print(
-            "SeleniumBase is not installed. Run:\n"
-            "  uv sync",
-            file=sys.stderr,
-        )
+        print("SeleniumBase is not installed. Run: uv sync", file=sys.stderr)
         return 2
 
-    print(
-        "Starting SeleniumBase "
-        f"mode={args.mode!r} incognito={args.incognito} "
-        f"binary_location={args.binary_location!r}",
-        flush=True,
+    browser_path = resolve_browser_path(args.browser_path)
+    apply_mycdp_patches()
+    print(f"browser={browser_path}")
+    print(f"opening={args.url}")
+
+    sb = sb_cdp.Chrome(
+        url=args.url,
+        browser_executable_path=browser_path,
+        headless=args.headless,
+        incognito=True,
+        lang="en",
     )
-
-    with SB(
-        uc=True,
-        test=True,
-        locale="en",
-        incognito=args.incognito,
-        binary_location=args.binary_location,
-        driver_version=args.driver_version,
-    ) as sb:
-        print(f"Opening: {args.url}")
-        if args.mode == "cdp":
-            sb.activate_cdp_mode(args.url)
-        else:
-            sb.uc_open_with_reconnect(args.url, reconnect_time=args.reconnect_time)
-
+    try:
         for attempt in range(1, args.captcha_attempts + 1):
-            print(f"Captcha attempt {attempt}/{args.captcha_attempts}")
-            if args.mode == "cdp":
-                sb.solve_captcha()
-            else:
-                sb.uc_gui_click_captcha(retry=True)
+            print(f"captcha_attempt={attempt}/{args.captcha_attempts}")
+            sb.sleep(3)
+            sb.solve_captcha()
             sb.sleep(args.settle_time)
 
             title = sb.get_title()
             current_url = sb.get_current_url()
-            print(f"title={title!r}")
-            print(f"url={current_url!r}")
-
-            page_text = (sb.get_text("body") or "").lower()
-            still_blocked = any(
-                marker in page_text
+            job_links = sb.select_all("a.jcs-JobTitle")
+            body_text = (sb.get_text("body") or "").lower()
+            blocked = any(
+                marker in body_text
                 for marker in (
                     "additional verification required",
                     "just a moment",
@@ -126,16 +135,22 @@ def main() -> int:
                     "cloudflare",
                 )
             )
-            has_jobs = bool(sb.find_elements("a.jcs-JobTitle"))
-            print(f"still_blocked={still_blocked}")
-            print(f"job_links={len(sb.find_elements('a.jcs-JobTitle'))}")
 
-            if has_jobs and not still_blocked:
+            print(f"title={title!r}")
+            print(f"url={current_url!r}")
+            print(f"job_links={len(job_links)}")
+            print(f"blocked={blocked}")
+
+            if job_links and not blocked:
+                href = job_links[0].get_attribute("href") or ""
+                print(f"first_job={urljoin('https://in.indeed.com', href)}")
                 print("PASSED: reached Indeed results.")
                 return 0
 
         print("FAILED: did not reach Indeed job results.")
         return 1
+    finally:
+        close_pure_cdp_browser(sb)
 
 
 if __name__ == "__main__":

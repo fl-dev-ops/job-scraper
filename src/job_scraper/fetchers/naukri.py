@@ -12,13 +12,20 @@ Naukri has weak bot detection; no proxies needed for typical volumes.
 
 from __future__ import annotations
 
-from urllib.parse import quote_plus, urljoin
+from typing import Any
+from urllib.parse import urljoin
 
-from botasaurus.browser import Driver, Wait, browser
+from selectolax.parser import HTMLParser
 
-from .base import load_site_config, make_browser_options
 from ..utils.logging import get_logger
 from ..utils.pacing import human_sleep
+from ..utils.seleniumbase_compat import (
+    close_pure_cdp_browser,
+    has_selector,
+    open_pure_cdp_browser,
+    wait_for_selector,
+)
+from .base import load_site_config
 
 log = get_logger("naukri")
 
@@ -36,6 +43,45 @@ def _build_search_url(template: str, query: str, location: str) -> str:
     return template.format(query=hyphenated_query)
 
 
+def _collect_listing_urls_from_html(
+    html: str,
+    selectors: dict[str, str],
+    base_url: str,
+    seen: set[str],
+    max_jobs: int,
+) -> list[str]:
+    parser = HTMLParser(html)
+    urls: list[str] = []
+
+    for card in parser.css(selectors["job_link"]):
+        href = card.attributes.get("href") or ""
+        if not href:
+            continue
+        canonical = href.split("?")[0]
+        if not canonical.startswith("http"):
+            canonical = urljoin(base_url, canonical)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        urls.append(canonical)
+        if len(urls) >= max_jobs:
+            break
+
+    return urls
+
+
+def _page_html(sb: Any) -> str:
+    return sb.get_page_source(include_shadow_dom=False) or ""
+
+
+def _has_selector(sb: Any, selector: str) -> bool:
+    return has_selector(sb, selector)
+
+
+def _open_page(sb: Any, url: str) -> None:
+    sb.open(url)
+
+
 def fetch_naukri(
     query: str, location: str, max_jobs: int
 ) -> list[tuple[str, str]]:
@@ -51,41 +97,36 @@ def fetch_naukri(
     min_delay = float(config.get("min_delay_seconds", 3))
     max_delay = float(config.get("max_delay_seconds", 8))
 
-    @browser(**make_browser_options("naukri", config))
-    def _scrape(driver: Driver, data: dict) -> list[tuple[str, str]]:
-        results: list[tuple[str, str]] = []
-        log.info("naukri_search", url=search_url, query=query)
-        driver.get(search_url)
+    results: list[tuple[str, str]] = []
+    log.info("naukri_search", url=search_url, query=query)
+
+    sb = open_pure_cdp_browser("naukri", config)
+    try:
+        _open_page(sb, search_url)
         human_sleep(min_delay, max_delay)
 
         seen: set[str] = set()
         urls: list[str] = []
 
         while len(urls) < max_jobs:
-            cards = driver.select_all(selectors["job_link"]) or []
-            for card in cards:
-                href = card.get_attribute("href") or ""
-                if not href:
-                    continue
-                canonical = href.split("?")[0]
-                if not canonical.startswith("http"):
-                    canonical = urljoin(base_url, canonical)
-                if canonical in seen:
-                    continue
-                seen.add(canonical)
-                urls.append(canonical)
-                if len(urls) >= max_jobs:
-                    break
+            urls.extend(
+                _collect_listing_urls_from_html(
+                    html=_page_html(sb),
+                    selectors=selectors,
+                    base_url=base_url,
+                    seen=seen,
+                    max_jobs=max_jobs - len(urls),
+                )
+            )
 
             log.info("listing_progress", collected=len(urls), target=max_jobs)
             if len(urls) >= max_jobs:
                 break
 
-            next_btn = driver.select(selectors["pagination_next"])
-            if not next_btn:
+            if not _has_selector(sb, selectors["pagination_next"]):
                 log.info("no_next_page")
                 break
-            next_btn.click()
+            sb.click(selectors["pagination_next"])
             human_sleep(min_delay, max_delay)
 
         log.info("listing_done", collected=len(urls))
@@ -93,10 +134,10 @@ def fetch_naukri(
         jd_selector = selectors["jd_body"]
         for idx, url in enumerate(urls[:max_jobs]):
             try:
-                driver.get(url)
+                _open_page(sb, url)
                 human_sleep(min_delay, max_delay)
-                driver.select(jd_selector, wait=Wait.LONG)
-                html = driver.run_js("return document.documentElement.outerHTML")
+                wait_for_selector(sb, jd_selector, timeout=20)
+                html = _page_html(sb)
                 if not html:
                     log.warning("empty_html", url=url)
                     continue
@@ -105,7 +146,33 @@ def fetch_naukri(
             except Exception as e:  # noqa: BLE001
                 log.warning("detail_failed", url=url, error=str(e))
                 continue
+    finally:
+        close_pure_cdp_browser(sb)
 
-        return results
+    return results
 
-    return _scrape({"query": query, "location": location, "max_jobs": max_jobs})
+
+def fetch_naukri_url(url: str) -> list[tuple[str, str]]:
+    """Return rendered HTML for one Naukri detail URL."""
+    config = load_site_config("naukri")
+    selectors = config["selectors"]
+    min_delay = float(config.get("min_delay_seconds", 3))
+    max_delay = float(config.get("max_delay_seconds", 8))
+    jd_selector = selectors["jd_body"]
+
+    log.info("naukri_detail", url=url)
+    sb = open_pure_cdp_browser("naukri", config)
+    try:
+        _open_page(sb, url)
+        human_sleep(min_delay, max_delay)
+        wait_for_selector(sb, jd_selector, timeout=20)
+        html = _page_html(sb)
+        if not html:
+            log.warning("empty_html", url=url)
+            return []
+        return [(html, url)]
+    except Exception as e:  # noqa: BLE001
+        log.warning("detail_failed", url=url, error=str(e))
+        return []
+    finally:
+        close_pure_cdp_browser(sb)

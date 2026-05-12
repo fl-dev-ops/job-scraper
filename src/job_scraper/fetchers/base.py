@@ -1,8 +1,8 @@
 """Shared utilities for site fetchers.
 
 Selectolax is used ONLY to:
-  1. Locate navigation elements (handled per-fetcher via Botasaurus selectors)
-  2. Strip HTML tags from the JD container → plain text for the LLM
+  1. Locate navigation elements
+  2. Strip HTML tags from the JD container -> plain text for the LLM
 
 It does NOT extract structured field values. All field extraction goes through
 the LLM in extractor.py to avoid silently wrong data from fragile CSS selectors.
@@ -10,7 +10,6 @@ the LLM in extractor.py to avoid silently wrong data from fragile CSS selectors.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -27,24 +26,6 @@ def load_site_config(site: str) -> dict[str, Any]:
         raise FileNotFoundError(f"Site config not found: {path}")
     with path.open() as f:
         return yaml.safe_load(f)
-
-
-def make_browser_options(site: str, site_config: dict[str, Any]) -> dict[str, Any]:
-    """Build Botasaurus @browser decorator kwargs from site config."""
-    proxy = (
-        site_config.get("proxy_url")
-        or os.getenv(f"{site.upper()}_PROXY_URL")
-        or os.getenv("PROXY_URL")
-        or None
-    )
-    block_resources = site_config.get("block_resources", [])
-    return {
-        "headless": site_config.get("headless", True),
-        "block_images": "image" in block_resources,
-        "proxy": proxy,
-        "max_retry": 2,
-        "reuse_driver": False,
-    }
 
 
 def extract_html_field(html: str, selector: str) -> str | None:

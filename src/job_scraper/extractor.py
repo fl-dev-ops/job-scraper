@@ -16,14 +16,10 @@ import asyncio
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from crawl4ai import (
-    AsyncWebCrawler,
-    BrowserConfig,
-    CacheMode,
-    CrawlerRunConfig,
     LLMConfig,
     LLMExtractionStrategy,
 )
@@ -114,20 +110,12 @@ class JobExtractor:
         )
 
     async def _run_crawler(self, plain_text: str) -> str | None:
-        """Invoke Crawl4AI on raw text, return JSON string or None."""
-        run_config = CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            extraction_strategy=self._strategy,
-            word_count_threshold=1,
-        )
-        browser_config = BrowserConfig(headless=True, verbose=False)
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            wrapped = f"<html><body><pre>{plain_text}</pre></body></html>"
-            result = await crawler.arun(url=f"raw://{wrapped}", config=run_config)
-            if not result.success:
-                log.warning("crawl4ai_failed", error=result.error_message)
-                return None
-            return result.extracted_content
+        """Invoke Crawl4AI's extraction strategy directly on plain text."""
+        extracted = await self._strategy.arun("raw://job-posting", [plain_text])
+        if not extracted:
+            log.warning("crawl4ai_failed", error="empty extraction result")
+            return None
+        return json.dumps(extracted, indent=4, default=str, ensure_ascii=False)
 
     async def extract_async(
         self,
@@ -184,7 +172,7 @@ class JobExtractor:
             job_id=job_id,
             source=source_url,
             site=site,
-            scraped_at=datetime.now(timezone.utc),
+            scraped_at=datetime.now(UTC),
             full_job_description=plain_text,
         )
         return apply_html_overrides(

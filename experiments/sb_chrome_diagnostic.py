@@ -3,12 +3,14 @@ SeleniumBase Chrome startup diagnostic script.
 
 Purpose:
     Checks whether SeleniumBase can start Chrome at all before testing Indeed.
+    Default mode uses regular ChromeDriver. Use --mode uc only when debugging
+    SeleniumBase UC / CDP behavior.
 
 Run:
-    uv run --with seleniumbase python sb_chrome_diagnostic.py
+    uv run python experiments/sb_chrome_diagnostic.py
 
 Optional:
-    uv run --with seleniumbase python sb_chrome_diagnostic.py \
+    uv run python experiments/sb_chrome_diagnostic.py --mode uc \
       --binary-location "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 If this script fails, the issue is Chrome/SeleniumBase/driver startup,
@@ -18,13 +20,11 @@ not your Indeed automation code.
 from __future__ import annotations
 
 import argparse
-import os
 import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-
 
 MAC_CHROME_PATHS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -35,9 +35,25 @@ MAC_CHROME_PATHS = [
     "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
 ]
 
+SELENIUMBASE_DRIVERS_DIR = (
+    Path(__file__).resolve().parents[1]
+    / ".venv"
+    / "lib"
+    / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    / "site-packages"
+    / "seleniumbase"
+    / "drivers"
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        choices=("regular", "uc"),
+        default="regular",
+        help="Use regular Selenium Chrome mode, or SeleniumBase UC mode.",
+    )
     parser.add_argument(
         "--binary-location",
         default=None,
@@ -57,6 +73,11 @@ def parse_args() -> argparse.Namespace:
         "--url",
         default="https://example.com",
         help="Safe startup test URL.",
+    )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Kill stale Chrome/chromedriver/uc_driver processes before testing.",
     )
     return parser.parse_args()
 
@@ -117,6 +138,24 @@ def print_environment(chrome_binary: str | None) -> None:
     print()
 
 
+def print_driver_info() -> None:
+    print("=== SeleniumBase drivers ===")
+    for label, path in (
+        ("chromedriver", SELENIUMBASE_DRIVERS_DIR / "chromedriver"),
+        ("uc_driver", SELENIUMBASE_DRIVERS_DIR / "uc_driver"),
+        ("cft uc_driver", SELENIUMBASE_DRIVERS_DIR / "cft_drivers" / "uc_driver"),
+    ):
+        print(f"{label}: {path}")
+        if not path.exists():
+            print("  missing")
+            continue
+        rc, out = run_cmd(["file", str(path)])
+        print(f"  file rc={rc}: {out}")
+        rc, out = run_cmd([str(path), "--version"])
+        print(f"  version rc={rc}: {out}")
+    print()
+
+
 def cleanup_stale_chrome_processes() -> None:
     """
     Kills Chrome/ChromeDriver processes that may be holding remote-debugging ports
@@ -129,16 +168,16 @@ def cleanup_stale_chrome_processes() -> None:
 
     print("=== Cleaning stale Chrome/Selenium processes ===")
 
-    # commands = [
-    #     ["pkill", "-f", "Google Chrome"],
-    #     ["pkill", "-f", "Google Chrome for Testing"],
-    #     ["pkill", "-f", "chromedriver"],
-    #     ["pkill", "-f", "uc_driver"],
-    # ]
+    commands = [
+        ["pkill", "-f", "Google Chrome"],
+        ["pkill", "-f", "Google Chrome for Testing"],
+        ["pkill", "-f", "chromedriver"],
+        ["pkill", "-f", "uc_driver"],
+    ]
 
-    # for cmd in commands:
-    #     rc, out = run_cmd(cmd)
-    #     print(f"{' '.join(cmd)} -> rc={rc}")
+    for cmd in commands:
+        rc, out = run_cmd(cmd)
+        print(f"{' '.join(cmd)} -> rc={rc}")
 
     print()
 
@@ -147,6 +186,7 @@ def seleniumbase_startup_test(
     chrome_binary: str | None,
     driver_version: str | None,
     headless: bool,
+    mode: str,
     url: str,
 ) -> int:
     print("=== SeleniumBase startup test ===")
@@ -155,18 +195,22 @@ def seleniumbase_startup_test(
         from seleniumbase import SB
     except ImportError:
         print("SeleniumBase import failed.")
-        print("Run: uv run --with seleniumbase python sb_chrome_diagnostic.py")
+        print("Run: uv sync")
         return 2
 
     print("Imported SeleniumBase successfully.")
 
     sb_kwargs = {
-        "uc": True,
         "test": True,
         "locale": "en",
         "headless": headless,
         "driver_version": driver_version,
     }
+
+    if mode == "uc":
+        sb_kwargs["uc"] = True
+    else:
+        sb_kwargs["browser"] = "chrome"
 
     if chrome_binary:
         sb_kwargs["binary_location"] = chrome_binary
@@ -200,6 +244,8 @@ def seleniumbase_startup_test(
         print("3. Stale Chrome or uc_driver process is blocking the debug port.")
         print("4. Existing Chrome profile lock or corrupted SeleniumBase driver cache.")
         print("5. macOS security/quarantine issue on downloaded Chrome/driver.")
+        if mode == "uc":
+            print("6. UC driver CPU architecture mismatch, especially on Apple Silicon.")
         return 1
 
 
@@ -209,22 +255,25 @@ def main() -> int:
     chrome_binary = find_chrome_binary(args.binary_location)
 
     print_environment(chrome_binary)
+    print_driver_info()
 
     if not chrome_binary:
         print("No Chrome binary found.")
         print("Install Google Chrome, or pass the full path:")
         print(
-            'uv run --with seleniumbase python sb_chrome_diagnostic.py '
+            'uv run python experiments/sb_chrome_diagnostic.py '
             '--binary-location "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"'
         )
         return 1
 
-    cleanup_stale_chrome_processes()
+    if args.cleanup:
+        cleanup_stale_chrome_processes()
 
     return seleniumbase_startup_test(
         chrome_binary=chrome_binary,
         driver_version=args.driver_version,
         headless=args.headless,
+        mode=args.mode,
         url=args.url,
     )
 

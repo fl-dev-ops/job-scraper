@@ -6,7 +6,7 @@ Scrapes CS graduate / early-career job postings (0–2 years experience) from **
 
 | Layer | Tool |
 |---|---|
-| Browser + anti-detection | SeleniumBase CDP mode for Indeed; Botasaurus for Naukri/LinkedIn |
+| Browser + anti-detection | SeleniumBase Pure CDP + Chrome for Testing |
 | Fast DOM extraction | selectolax |
 | LLM field extraction | Crawl4AI → LiteLLM → OpenRouter |
 | Schema validation | Pydantic v2 |
@@ -20,6 +20,9 @@ curl -Ls https://astral.sh/uv/install.sh | sh
 
 # Install dependencies
 uv sync
+
+# Install Chrome for Testing for the scraper browser path
+uv run sbase get cft
 
 # Install Playwright browser binaries (Crawl4AI dependency)
 uv run playwright install chromium
@@ -82,8 +85,38 @@ uv run ruff check .    # lint
 uv run mypy src/       # type check
 ```
 
+## Experiments
+
+Manual probes live in `experiments/`. These are not pytest tests.
+
+Use the Indeed probe before debugging production scraping:
+
+```bash
+# Indeed probe with separate Chrome for Testing + Pure CDP
+uv run python experiments/selenium_base_test.py
+
+# Regular Selenium/ChromeDriver startup check, if diagnosing local Chrome
+uv run python experiments/sb_chrome_diagnostic.py
+
+# UC mode check, only when diagnosing uc_driver startup failures
+uv run python experiments/sb_chrome_diagnostic.py --mode uc
+```
+
+On Apple Silicon, a common failure is:
+
+```text
+SessionNotCreatedException: cannot connect to chrome at 127.0.0.1:9222
+```
+
+Do not treat that as an Indeed URL problem. First compare the printed Chrome,
+`chromedriver`, and `uc_driver` versions and CPU architectures from
+`experiments/sb_chrome_diagnostic.py`. Regular Chrome control can work while UC
+mode fails if SeleniumBase downloaded an `x86_64` `uc_driver` under an `arm64`
+Python process. The Indeed fetcher and Indeed experiment avoid that UC startup
+path by using Pure CDP with Chrome for Testing.
+
 ## Known limitations
 
-- **Naukri**: reliable without proxies.
+- **Naukri**: reliable without proxies; keep `headless=false` for Pure CDP.
 - **Indeed**: reliable; add `INDEED_PROXY_URL` (residential) for sustained runs.
-- **LinkedIn**: Botasaurus handles fingerprint-level detection. LinkedIn additionally applies session/behavioral analysis (request cadence, navigation patterns). Mitigations are in place (slow pacing, session rotation, headless=false), but intermittent blocks at volume are a property of LinkedIn's detection system — not a tool limitation. Start with `--max 10` to gauge your session tolerance before scaling up. Set `LINKEDIN_PROXY_URL` to a residential proxy for best results.
+- **LinkedIn**: uses the same Pure CDP + Chrome for Testing browser path. LinkedIn additionally applies session/behavioral analysis (request cadence, navigation patterns). Mitigations are in place (slow pacing, session rotation, headless=false), but intermittent blocks at volume are a property of LinkedIn's detection system — not a tool limitation. Start with `--max 10` to gauge your session tolerance before scaling up. Set `LINKEDIN_PROXY_URL` to a residential proxy for best results.

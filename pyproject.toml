@@ -4,9 +4,6 @@ version = "0.1.0"
 description = "CS graduate / early-career job scraper: Naukri, Indeed, LinkedIn"
 requires-python = ">=3.11"
 dependencies = [
-    # fetching & anti-detection
-    "botasaurus>=3.2.0",
-    "botasaurus-driver>=3.2.0",
     # extraction & parsing
     "crawl4ai>=0.4.0",
     "litellm>=1.40.0",
@@ -20,6 +17,7 @@ dependencies = [
     "typer>=0.12.0",
     "httpx>=0.28.1",
     "seleniumbase>=4.48.4",
+    "langextract>=1.3.0",
 ]
 
 [project.scripts]

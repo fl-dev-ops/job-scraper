@@ -8,9 +8,8 @@ Strategy:
 5. For each detail URL, navigate and capture the rendered HTML.
 6. Return list of (html, canonical_url).
 
-This intentionally uses Botasaurus's @browser decorator so the listing scroll
-and the per-detail navigation share one driver instance — fewer launches,
-fewer fingerprint-detection signals.
+This uses the same SeleniumBase Pure CDP + Chrome for Testing browser path as
+the Indeed fetcher. Listing and detail navigation share one browser instance.
 
 Soft-block handling: login walls / auth gates are detected on each page; when
 seen, we log block_signal and stop collecting (rather than crash). Caller
@@ -19,15 +18,19 @@ sees whatever was successfully collected before the block.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlsplit, urlunsplit
 
-from botasaurus.browser import Driver, Wait, browser  # type: ignore[import-untyped]
 from selectolax.parser import HTMLParser
 
 from ..utils.logging import get_logger
 from ..utils.pacing import human_sleep
-from .base import load_site_config, make_browser_options
+from ..utils.seleniumbase_compat import (
+    close_pure_cdp_browser,
+    open_pure_cdp_browser,
+    wait_for_selector,
+)
+from .base import load_site_config
 
 log = get_logger("linkedin")
 
@@ -103,20 +106,40 @@ def _build_paginated_search_url(search_url: str, page_index: int, page_size: int
     )
 
 
-def _is_blocked(driver: Driver) -> str | None:
+def _page_html(sb: Any) -> str:
+    return sb.get_page_source(include_shadow_dom=False) or ""
+
+
+def _run_js(sb: Any, script: str) -> Any:
+    try:
+        return sb.execute_script(script)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _open_page(sb: Any, url: str) -> None:
+    sb.open(url)
+
+
+def _is_blocked(sb: Any) -> str | None:
     """Detect a real wall by URL or page-level class — not header form fields.
 
     LinkedIn's header always contains a sign-in form even when content is
     visible to guests; checking for that form gives false positives.
     """
-    current_url = driver.run_js("return window.location.href || ''") or ""
+    try:
+        current_url = sb.get_current_url() or ""
+    except Exception:  # noqa: BLE001
+        current_url = ""
     for frag in _BLOCKING_URL_FRAGMENTS:
         if frag in current_url:
             return f"redirect:{frag}"
     # Body-level authwall class is set when LinkedIn forces a block
-    if driver.run_js(
-        "return document.body && document.body.classList.contains('authwall') ? 1 : 0"
-    ):
+    has_authwall_body = _run_js(
+        sb,
+        "return document.body && document.body.classList.contains('authwall') ? 1 : 0",
+    )
+    if has_authwall_body:
         return "authwall_body"
     return None
 
@@ -171,10 +194,10 @@ def fetch_linkedin(
         1,
     )
 
-    @browser(**make_browser_options("linkedin", config))  # type: ignore[untyped-decorator]
-    def _scrape(driver: Driver, data: dict[str, object]) -> list[tuple[str, str]]:
-        results: list[tuple[str, str]] = []
+    results: list[tuple[str, str]] = []
 
+    sb = open_pure_cdp_browser("linkedin", config)
+    try:
         # Collect detail URLs by processing one paginated listing window at a time.
         seen: set[str] = set()
         urls: list[str] = []
@@ -185,10 +208,10 @@ def fetch_linkedin(
                 page_size=listing_page_size,
             )
             log.info("linkedin_search", url=page_url, query=query, page_index=page_index)
-            driver.get(page_url)
+            _open_page(sb, page_url)
             human_sleep(min_delay, max_delay)
 
-            signal = _is_blocked(driver)
+            signal = _is_blocked(sb)
             if signal:
                 log.warning(
                     "block_signal",
@@ -200,7 +223,7 @@ def fetch_linkedin(
 
             page_start_count = len(urls)
             for scroll_index in range(scrolls_per_listing_page):
-                listing_html = driver.run_js("return document.documentElement.outerHTML") or ""
+                listing_html = _page_html(sb)
                 urls.extend(
                     _collect_listing_urls_from_html(
                         html=listing_html,
@@ -219,7 +242,7 @@ def fetch_linkedin(
                 )
                 if len(urls) >= max_jobs:
                     break
-                driver.run_js(f"window.scrollBy(0, {scroll_depth});")
+                _run_js(sb, f"window.scrollBy(0, {scroll_depth});")
                 human_sleep(min_delay, max_delay)
 
             log.info(
@@ -241,25 +264,20 @@ def fetch_linkedin(
         jd_selector = selectors["jd_body"]
         for idx, url in enumerate(urls[:max_jobs]):
             try:
-                driver.get(url)
+                _open_page(sb, url)
                 human_sleep(min_delay, max_delay)
-                signal = _is_blocked(driver)
+                signal = _is_blocked(sb)
                 if signal:
                     log.warning("block_signal", signal=signal, stage="detail", url=url)
                     break
-                driver.select(jd_selector, wait=Wait.LONG)
-                html = driver.run_js(
-                    "return document.documentElement.outerHTML"
-                )
+                wait_for_selector(sb, jd_selector, timeout=20)
+                html = _page_html(sb)
                 results.append((html, url))
                 log.info("detail_fetched", idx=idx, url=url)
             except Exception as e:  # noqa: BLE001 — best-effort detail capture
                 log.warning("detail_failed", url=url, error=str(e))
                 continue
+    finally:
+        close_pure_cdp_browser(sb)
 
-        return results
-
-    return cast(
-        "list[tuple[str, str]]",
-        _scrape({"query": query, "location": location, "max_jobs": max_jobs}),
-    )
+    return results

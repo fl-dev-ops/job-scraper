@@ -1,8 +1,8 @@
-"""Indeed India fetcher using SeleniumBase CDP mode.
+"""Indeed India fetcher using SeleniumBase Pure CDP mode.
 
 Strategy:
 1. Build search URL with query, location, entry_level filter, and 30-day recency.
-2. Open pages with SeleniumBase CDP mode and solve visible Cloudflare challenges.
+2. Open pages with Chrome for Testing via SeleniumBase Pure CDP.
 3. Paginate via next-button (data-testid="pagination-page-next").
 4. Collect job detail URLs from listing cards (a.jcs-JobTitle).
 5. Navigate to each detail URL and capture rendered HTML.
@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from urllib.parse import quote_plus, urljoin
-
-from seleniumbase import SB  # type: ignore[import-untyped]
+from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
 
 from ..utils.logging import get_logger
 from ..utils.pacing import human_sleep
+from ..utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 from .base import load_site_config
 
 log = get_logger("indeed")
@@ -72,7 +71,7 @@ def _is_captcha(sb: Any) -> bool:
 
 def _find_elements(sb: Any, selector: str) -> list[Any]:
     try:
-        return list(sb.find_elements(selector) or [])
+        return list(sb.select_all(selector) or [])
     except Exception:  # noqa: BLE001
         return []
 
@@ -135,13 +134,13 @@ def _open_page(
     captcha_timeout: int,
 ) -> bool:
     log.info("indeed_open", stage=stage, url=url)
-    sb.activate_cdp_mode(url)
+    sb.open(url)
     return _solve_captcha_if_needed(sb, stage, expected_selector, captcha_timeout)
 
 
 def _page_html(sb: Any) -> str:
     try:
-        return sb.cdp.get_page_source(include_shadow_dom=False) or ""
+        return sb.get_page_source(include_shadow_dom=False) or ""
     except Exception:  # noqa: BLE001
         return sb.get_page_source() or ""
 
@@ -151,6 +150,16 @@ def _element_attr(element: Any, attr: str) -> str:
         return element.get_attribute(attr) or ""
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _normalize_job_url(base_url: str, href: str) -> str:
+    absolute = urljoin(base_url, href)
+    parsed = urlparse(absolute)
+    query = parse_qs(parsed.query)
+    jk = query.get("jk", [None])[0]
+    if jk:
+        return urljoin(base_url, f"/viewjob?{urlencode({'jk': jk})}")
+    return absolute
 
 
 def fetch_indeed(
@@ -171,7 +180,8 @@ def fetch_indeed(
     results: list[tuple[str, str]] = []
     log.info("indeed_search", url=search_url, query=query)
 
-    with SB(uc=True, test=True, locale="en") as sb:
+    sb = open_pure_cdp_browser("indeed", config)
+    try:
         if not _open_page(
             sb,
             search_url,
@@ -191,9 +201,7 @@ def fetch_indeed(
                 href = _element_attr(card, "href")
                 if not href:
                     continue
-                canonical = href.split("?")[0]
-                if not canonical.startswith("http"):
-                    canonical = urljoin(base_url, canonical)
+                canonical = _normalize_job_url(base_url, href)
                 if canonical in seen:
                     continue
                 seen.add(canonical)
@@ -237,5 +245,7 @@ def fetch_indeed(
             except Exception as e:  # noqa: BLE001
                 log.warning("detail_failed", url=url, error=str(e))
                 continue
+    finally:
+        close_pure_cdp_browser(sb)
 
     return results

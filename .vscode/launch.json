@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Naukri Apple job scrape",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "job_scraper",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "args": [
+        "naukri",
+        "--url",
+        "https://www.naukri.com/job-listings-software-engineer-apple-india-pvt-ltd-bengaluru-0-to-7-years-270326503732",
+        "--log-level",
+        "DEBUG"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}
