@@ -26,6 +26,8 @@ selectors:
   job_cards: "article.jobTuple"       # listing page: identifies each job card
   job_link: "a.title"                  # href to JD detail page (within each card)
   jd_body: "section[class*='job-desc-container']" # JD container → stripped to plain text for LLM
+  llm_context_selector:
+    - "section[class*='job-header']" # Header context: title, company, exp, salary, location
   pagination_next: "a.pagination-next" # next page button
   # Location span in detail page header (CSS module class; substring match is stable)
   location_selector: "span[class*='location']"

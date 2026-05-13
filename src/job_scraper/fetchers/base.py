@@ -28,13 +28,13 @@ def load_site_config(site: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def extract_html_field(html: str, selector: str) -> str | None:
+def extract_html_field(html: str, selector: str, separator: str = "") -> str | None:
     """Extract text from the first element matching selector. Returns None if not found."""
     parser = HTMLParser(html)
     for sel in (s.strip() for s in selector.split(",")):
         node = parser.css_first(sel)
         if node:
-            text = node.text(strip=True)
+            text = node.text(separator=separator, strip=True)
             if text:
                 return text
     return None

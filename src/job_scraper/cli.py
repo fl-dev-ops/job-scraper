@@ -30,6 +30,14 @@ SearchFetcher = Callable[[str, str, int], list[tuple[str, str]]]
 DetailFetcher = Callable[[str], list[tuple[str, str]]]
 
 
+def _selector_list(value: object) -> list[str] | None:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    return None
+
+
 async def _extract_and_write(
     semaphore: asyncio.Semaphore,
     extractor: JobExtractor,
@@ -40,13 +48,21 @@ async def _extract_and_write(
     title_selector: str | None,
     location_selector: str | None,
     company_selector: str | None,
+    llm_context_selectors: list[str] | None,
     seen_ids: set[str],
     log: Any,
 ) -> JobPosting | None:
     """Extract one job under the semaphore and write it immediately if new."""
     async with semaphore:
         posting = await extractor.extract_async(
-            html, url, jd_selector, site, title_selector, location_selector, company_selector
+            html,
+            url,
+            jd_selector,
+            site,
+            title_selector,
+            location_selector,
+            company_selector,
+            llm_context_selectors,
         )
         if posting is None:
             return None
@@ -70,6 +86,7 @@ async def _extract_pages_for_site(
     title_selector: str | None,
     location_selector: str | None,
     company_selector: str | None,
+    llm_context_selectors: list[str] | None,
     parallelism: int,
     seen_ids: set[str],
 ) -> int:
@@ -86,6 +103,7 @@ async def _extract_pages_for_site(
             title_selector,
             location_selector,
             company_selector,
+            llm_context_selectors,
             seen_ids,
             log,
         )
@@ -115,6 +133,7 @@ def _run_for_site(
     title_selector: str | None = site_config["selectors"].get("title_selector")
     company_selector: str | None = site_config["selectors"].get("company_selector")
     location_selector: str | None = site_config["selectors"].get("location_selector")
+    llm_context_selectors = _selector_list(site_config["selectors"].get("llm_context_selector"))
     parallelism = int(site_config.get("parallel_extractions", 5))
 
     fetcher: SearchFetcher
@@ -159,6 +178,7 @@ def _run_for_site(
                 title_selector=title_selector,
                 location_selector=location_selector,
                 company_selector=company_selector,
+                llm_context_selectors=llm_context_selectors,
                 parallelism=parallelism,
                 seen_ids=seen_ids,
             )
@@ -185,6 +205,7 @@ def _run_for_site(
                 title_selector=title_selector,
                 location_selector=location_selector,
                 company_selector=company_selector,
+                llm_context_selectors=llm_context_selectors,
                 parallelism=parallelism,
                 seen_ids=seen_ids,
             )

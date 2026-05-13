@@ -1426,6 +1426,7 @@ dependencies = [
     { name = "seleniumbase" },
     { name = "structlog" },
     { name = "tenacity" },
+    { name = "tqdm" },
     { name = "typer" },
 ]
 
@@ -1452,6 +1453,7 @@ requires-dist = [
     { name = "seleniumbase", specifier = ">=4.48.4" },
     { name = "structlog", specifier = ">=24.2.0" },
     { name = "tenacity", specifier = ">=8.3.0" },
+    { name = "tqdm", specifier = ">=4.67.0" },
     { name = "typer", specifier = ">=0.12.0" },
 ]
 

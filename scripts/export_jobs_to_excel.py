@@ -23,6 +23,7 @@ from xml.sax.saxutils import escape
 
 import yaml
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "jobs" / "linkedin"
@@ -478,7 +479,7 @@ def export_jobs(input_dir: Path, output_path: Path, *, use_llm: bool, model: str
 
     records = [
         _build_record(path, use_llm=use_llm, model=model, api_key=api_key)
-        for path in paths
+        for path in tqdm(paths, desc="Exporting jobs", unit="job")
     ]
     _write_xlsx(records, output_path)
     return len(records)

@@ -83,6 +83,24 @@ def apply_html_overrides(
     return posting.model_copy(update=updates)
 
 
+def _extract_llm_context(html: str, selectors: list[str] | None) -> str | None:
+    if not selectors:
+        return None
+
+    context_parts: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        text = extract_html_field(html, selector, separator="\n")
+        if not text or text in seen:
+            continue
+        context_parts.append(text)
+        seen.add(text)
+
+    if not context_parts:
+        return None
+    return "\n\n".join(context_parts)
+
+
 class JobExtractor:
     """Singleton extractor reused across all sites."""
 
@@ -126,17 +144,23 @@ class JobExtractor:
         title_selector: str | None = None,
         location_selector: str | None = None,
         company_selector: str | None = None,
+        llm_context_selectors: list[str] | None = None,
     ) -> JobPosting | None:
         plain_text = extract_jd_text(html, jd_body_selector)
         if not plain_text or len(plain_text) < 50:
             log.warning("jd_text_too_short", url=source_url, length=len(plain_text))
             return None
 
-        llm_text = plain_text
+        llm_parts: list[str] = []
+        llm_context = _extract_llm_context(html, llm_context_selectors)
+        if llm_context:
+            llm_parts.append(f"Job page context:\n{llm_context}")
         if title_selector:
             css_title = extract_html_field(html, title_selector)
             if css_title:
-                llm_text = f"Job title: {css_title}\n\n{plain_text}"
+                llm_parts.append(f"Job title: {css_title}")
+        llm_parts.append(plain_text)
+        llm_text = "\n\n".join(llm_parts)
 
         raw_json = await self._run_crawler(llm_text)
         if not raw_json:
@@ -188,6 +212,7 @@ class JobExtractor:
         title_selector: str | None = None,
         location_selector: str | None = None,
         company_selector: str | None = None,
+        llm_context_selectors: list[str] | None = None,
     ) -> JobPosting | None:
         return asyncio.run(
             self.extract_async(
@@ -198,6 +223,7 @@ class JobExtractor:
                 title_selector,
                 location_selector,
                 company_selector,
+                llm_context_selectors,
             )
         )
 

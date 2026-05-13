@@ -141,7 +141,8 @@ async def scrape_company_query(
     )
 
     try:
-        pages = fetch_linkedin(
+        pages = await asyncio.to_thread(
+            fetch_linkedin,
             query,
             location,
             max_jobs,
