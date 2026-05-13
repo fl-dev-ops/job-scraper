@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import platform
 import sys
@@ -99,20 +100,74 @@ def apply_mycdp_patches() -> None:
     network.ResourceType._job_scraper_patched = True  # type: ignore[attr-defined]
 
 
+def _connection_loop(connection: Any) -> asyncio.AbstractEventLoop | None:
+    listener = getattr(connection, "listener", None)
+    task = getattr(listener, "task", None)
+    if task:
+        with suppress(Exception):
+            return task.get_loop()
+    return None
+
+
+def _run_on_loop(loop: asyncio.AbstractEventLoop | None, awaitable: Any) -> None:
+    if not loop or loop.is_closed():
+        with suppress(Exception):
+            awaitable.close()
+        return
+    with suppress(Exception):
+        loop.run_until_complete(awaitable)
+
+
+def _drain_loop(loop: asyncio.AbstractEventLoop | None) -> None:
+    if not loop or loop.is_closed():
+        return
+    with suppress(Exception):
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    with suppress(Exception):
+        loop.run_until_complete(loop.shutdown_asyncgens())
+
+
 def close_pure_cdp_browser(sb: Any) -> None:
     """Best-effort shutdown for SeleniumBase Pure CDP browser objects."""
     driver = getattr(sb, "driver", None)
-    loop = getattr(sb, "loop", None)
-    connection = getattr(driver, "connection", None) if driver else None
+    page = getattr(sb, "page", None)
+    page_loop = getattr(sb, "loop", None)
+    browser_connection = getattr(driver, "connection", None) if driver else None
+    browser_loop = _connection_loop(browser_connection)
+    process = getattr(driver, "_process", None) if driver else None
 
-    if loop and connection:
-        with suppress(Exception):
-            loop.run_until_complete(connection.aclose())
+    previous_loop: asyncio.AbstractEventLoop | None = None
+    with suppress(RuntimeError):
+        previous_loop = asyncio.get_event_loop()
+
+    if page and hasattr(page, "aclose"):
+        _run_on_loop(page_loop, page.aclose())
+
+    if browser_connection and hasattr(browser_connection, "aclose"):
+        _run_on_loop(browser_loop, browser_connection.aclose())
 
     if driver:
         with suppress(Exception):
-            driver.stop()
-
-    if loop and not loop.is_closed():
+            driver.connection = None
         with suppress(Exception):
-            loop.close()
+            driver.stop()
+        with suppress(Exception):
+            driver.connection = browser_connection
+
+    if process and browser_loop and not browser_loop.is_closed():
+        with suppress(Exception):
+            browser_loop.run_until_complete(asyncio.wait_for(process.wait(), timeout=5))
+
+    for loop in {page_loop, browser_loop}:
+        _drain_loop(loop)
+        if loop and not loop.is_closed():
+            with suppress(Exception):
+                loop.close()
+
+    with suppress(Exception):
+        if previous_loop and not previous_loop.is_closed():
+            asyncio.set_event_loop(previous_loop)
+        else:
+            asyncio.set_event_loop(None)

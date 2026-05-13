@@ -31,6 +31,7 @@ from ..utils.seleniumbase_compat import (
     wait_for_selector,
 )
 from .base import load_site_config
+from .browser import capture_detail_html, fetch_detail_url, open_page, page_html
 
 log = get_logger("linkedin")
 
@@ -106,19 +107,11 @@ def _build_paginated_search_url(search_url: str, page_index: int, page_size: int
     )
 
 
-def _page_html(sb: Any) -> str:
-    return sb.get_page_source(include_shadow_dom=False) or ""
-
-
 def _run_js(sb: Any, script: str) -> Any:
     try:
         return sb.execute_script(script)
     except Exception:  # noqa: BLE001
         return None
-
-
-def _open_page(sb: Any, url: str) -> None:
-    sb.open(url)
 
 
 def _is_blocked(sb: Any) -> str | None:
@@ -208,7 +201,7 @@ def fetch_linkedin(
                 page_size=listing_page_size,
             )
             log.info("linkedin_search", url=page_url, query=query, page_index=page_index)
-            _open_page(sb, page_url)
+            open_page(sb, page_url)
             human_sleep(min_delay, max_delay)
 
             signal = _is_blocked(sb)
@@ -223,7 +216,7 @@ def fetch_linkedin(
 
             page_start_count = len(urls)
             for scroll_index in range(scrolls_per_listing_page):
-                listing_html = _page_html(sb)
+                listing_html = page_html(sb)
                 urls.extend(
                     _collect_listing_urls_from_html(
                         html=listing_html,
@@ -264,14 +257,17 @@ def fetch_linkedin(
         jd_selector = selectors["jd_body"]
         for idx, url in enumerate(urls[:max_jobs]):
             try:
-                _open_page(sb, url)
-                human_sleep(min_delay, max_delay)
-                signal = _is_blocked(sb)
-                if signal:
-                    log.warning("block_signal", signal=signal, stage="detail", url=url)
+                html = capture_detail_html(
+                    sb,
+                    url,
+                    jd_selector,
+                    min_delay,
+                    max_delay,
+                    log,
+                    ready_check=_detail_ready,
+                )
+                if html is None:
                     break
-                wait_for_selector(sb, jd_selector, timeout=20)
-                html = _page_html(sb)
                 results.append((html, url))
                 log.info("detail_fetched", idx=idx, url=url)
             except Exception as e:  # noqa: BLE001 — best-effort detail capture
@@ -281,3 +277,26 @@ def fetch_linkedin(
         close_pure_cdp_browser(sb)
 
     return results
+
+
+def _detail_ready(sb: Any, jd_selector: str) -> bool:
+    signal = _is_blocked(sb)
+    if signal:
+        log.warning("block_signal", signal=signal, stage="detail", url=_current_url(sb))
+        return False
+    wait_for_selector(sb, jd_selector, timeout=20)
+    return True
+
+
+def _current_url(sb: Any) -> str:
+    try:
+        return sb.get_current_url() or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def fetch_linkedin_url(url: str) -> list[tuple[str, str]]:
+    """Return rendered HTML for one LinkedIn detail URL."""
+    config = load_site_config("linkedin")
+    canonical_url = urljoin(config["base_url"], url.split("?")[0])
+    return fetch_detail_url("linkedin", canonical_url, config, log, ready_check=_detail_ready)

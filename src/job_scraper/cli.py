@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Annotated, Any
 
 import typer
@@ -25,6 +26,8 @@ load_dotenv()
 app = typer.Typer(name="job-scraper", add_completion=False)
 
 SUPPORTED_SITES: tuple[str, ...] = ("naukri", "indeed", "linkedin")
+SearchFetcher = Callable[[str, str, int], list[tuple[str, str]]]
+DetailFetcher = Callable[[str], list[tuple[str, str]]]
 
 
 async def _extract_and_write(
@@ -114,15 +117,23 @@ def _run_for_site(
     location_selector: str | None = site_config["selectors"].get("location_selector")
     parallelism = int(site_config.get("parallel_extractions", 5))
 
+    fetcher: SearchFetcher
+    detail_fetcher: DetailFetcher
     if site == "linkedin":
-        from .fetchers.linkedin import fetch_linkedin
+        from .fetchers.linkedin import fetch_linkedin, fetch_linkedin_url
+
         fetcher = fetch_linkedin
+        detail_fetcher = fetch_linkedin_url
     elif site == "naukri":
         from .fetchers.naukri import fetch_naukri, fetch_naukri_url
+
         fetcher = fetch_naukri
+        detail_fetcher = fetch_naukri_url
     elif site == "indeed":
-        from .fetchers.indeed import _expand_company_queries, fetch_indeed
+        from .fetchers.indeed import _expand_company_queries, fetch_indeed, fetch_indeed_url
+
         fetcher = fetch_indeed
+        detail_fetcher = fetch_indeed_url
         queries = _expand_company_queries(
             queries,
             [str(company) for company in site_config.get("company_names", [])],
@@ -136,10 +147,7 @@ def _run_for_site(
     seen_ids: set[str] = set()
 
     if url:
-        if site != "naukri":
-            log.error("url_mode_not_supported", site=site)
-            return 0
-        pages = fetch_naukri_url(url)
+        pages = detail_fetcher(url)
         log.info("fetched", query="url", pages=len(pages))
         written = asyncio.run(
             _extract_pages_for_site(
@@ -198,7 +206,7 @@ def scrape(
     ] = None,
     url: Annotated[
         str | None,
-        typer.Option(help="Scrape one detail URL directly. Currently supported for Naukri."),
+        typer.Option(help="Scrape one detail URL directly."),
     ] = None,
     location: Annotated[str, typer.Option(help="Location filter")] = "India",
     max: Annotated[
@@ -227,7 +235,7 @@ def scrape(
     for s in sites:
         cfg = load_site_config(s)
         queries = [query] if query else list(cfg.get("queries", []))
-        if not queries:
+        if not url and not queries:
             log.error("no_queries", site=s)
             continue
         total += _run_for_site(s, queries, location, max, url)

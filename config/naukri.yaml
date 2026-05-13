@@ -37,6 +37,6 @@ parallel_extractions: 5  # max concurrent LLM extraction tasks per query
 min_delay_seconds: 3
 max_delay_seconds: 8
 pages_per_session: 10    # restart browser every N pages
-headless: true
+headless: false
 block_resources: ["image", "font", "media"]
 proxy_url: null          # override with env NAUKRI_PROXY_URL

@@ -23,9 +23,9 @@ from ..utils.seleniumbase_compat import (
     close_pure_cdp_browser,
     has_selector,
     open_pure_cdp_browser,
-    wait_for_selector,
 )
 from .base import load_site_config
+from .browser import capture_detail_html, fetch_detail_url, open_page, page_html
 
 log = get_logger("naukri")
 
@@ -70,16 +70,8 @@ def _collect_listing_urls_from_html(
     return urls
 
 
-def _page_html(sb: Any) -> str:
-    return sb.get_page_source(include_shadow_dom=False) or ""
-
-
 def _has_selector(sb: Any, selector: str) -> bool:
     return has_selector(sb, selector)
-
-
-def _open_page(sb: Any, url: str) -> None:
-    sb.open(url)
 
 
 def fetch_naukri(
@@ -102,7 +94,7 @@ def fetch_naukri(
 
     sb = open_pure_cdp_browser("naukri", config)
     try:
-        _open_page(sb, search_url)
+        open_page(sb, search_url)
         human_sleep(min_delay, max_delay)
 
         seen: set[str] = set()
@@ -111,7 +103,7 @@ def fetch_naukri(
         while len(urls) < max_jobs:
             urls.extend(
                 _collect_listing_urls_from_html(
-                    html=_page_html(sb),
+                    html=page_html(sb),
                     selectors=selectors,
                     base_url=base_url,
                     seen=seen,
@@ -134,12 +126,15 @@ def fetch_naukri(
         jd_selector = selectors["jd_body"]
         for idx, url in enumerate(urls[:max_jobs]):
             try:
-                _open_page(sb, url)
-                human_sleep(min_delay, max_delay)
-                wait_for_selector(sb, jd_selector, timeout=20)
-                html = _page_html(sb)
-                if not html:
-                    log.warning("empty_html", url=url)
+                html = capture_detail_html(
+                    sb,
+                    url,
+                    jd_selector,
+                    min_delay,
+                    max_delay,
+                    log,
+                )
+                if html is None:
                     continue
                 results.append((html, url))
                 log.info("detail_fetched", idx=idx, url=url)
@@ -155,24 +150,4 @@ def fetch_naukri(
 def fetch_naukri_url(url: str) -> list[tuple[str, str]]:
     """Return rendered HTML for one Naukri detail URL."""
     config = load_site_config("naukri")
-    selectors = config["selectors"]
-    min_delay = float(config.get("min_delay_seconds", 3))
-    max_delay = float(config.get("max_delay_seconds", 8))
-    jd_selector = selectors["jd_body"]
-
-    log.info("naukri_detail", url=url)
-    sb = open_pure_cdp_browser("naukri", config)
-    try:
-        _open_page(sb, url)
-        human_sleep(min_delay, max_delay)
-        wait_for_selector(sb, jd_selector, timeout=20)
-        html = _page_html(sb)
-        if not html:
-            log.warning("empty_html", url=url)
-            return []
-        return [(html, url)]
-    except Exception as e:  # noqa: BLE001
-        log.warning("detail_failed", url=url, error=str(e))
-        return []
-    finally:
-        close_pure_cdp_browser(sb)
+    return fetch_detail_url("naukri", url, config, log)

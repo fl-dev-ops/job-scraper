@@ -19,6 +19,7 @@ from ..utils.logging import get_logger
 from ..utils.pacing import human_sleep
 from ..utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 from .base import load_site_config
+from .browser import fetch_detail_url
 
 log = get_logger("indeed")
 
@@ -249,3 +250,15 @@ def fetch_indeed(
         close_pure_cdp_browser(sb)
 
     return results
+
+
+def fetch_indeed_url(url: str) -> list[tuple[str, str]]:
+    """Return rendered HTML for one Indeed detail URL."""
+    config = load_site_config("indeed")
+    canonical_url = _normalize_job_url(config["base_url"], url)
+    captcha_timeout = int(config.get("captcha_solve_timeout_seconds", 90))
+
+    def detail_ready(sb: Any, jd_selector: str) -> bool:
+        return _solve_captcha_if_needed(sb, "detail", jd_selector, captcha_timeout)
+
+    return fetch_detail_url("indeed", canonical_url, config, log, ready_check=detail_ready)
