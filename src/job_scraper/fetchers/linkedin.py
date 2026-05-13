@@ -18,6 +18,7 @@ sees whatever was successfully collected before the block.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -49,10 +50,17 @@ _BLOCKING_URL_FRAGMENTS = (
 )
 
 
-def _load_company_ids(config: dict[str, Any]) -> tuple[str, ...]:
-    raw_company_ids = config.get("company_ids") or []
-    if not isinstance(raw_company_ids, list):
-        raise TypeError("company_ids must be a YAML list of LinkedIn company IDs")
+def _load_company_ids(
+    config: dict[str, Any],
+    company_ids_override: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    if company_ids_override is not None:
+        raw_company_ids: Sequence[object] = company_ids_override
+    else:
+        raw_config_company_ids = config.get("company_ids") or []
+        if not isinstance(raw_config_company_ids, list):
+            raise TypeError("company_ids must be a YAML list of LinkedIn company IDs")
+        raw_company_ids = raw_config_company_ids
 
     company_ids: list[str] = []
     for company_id in raw_company_ids:
@@ -62,13 +70,18 @@ def _load_company_ids(config: dict[str, Any]) -> tuple[str, ...]:
     return tuple(company_ids)
 
 
-def _build_search_url(config: dict[str, Any], query: str, location: str) -> str:
+def _build_search_url(
+    config: dict[str, Any],
+    query: str,
+    location: str,
+    company_ids_override: Sequence[str] | None = None,
+) -> str:
     search_template = str(config["search_url"])
     search_url = search_template.format(
         query=quote_plus(query),
         location=quote_plus(location or "India"),
     )
-    company_ids = _load_company_ids(config)
+    company_ids = _load_company_ids(config, company_ids_override)
     if not company_ids:
         return search_url
 
@@ -168,19 +181,25 @@ def _collect_listing_urls_from_html(
 
 
 def fetch_linkedin(
-    query: str, location: str, max_jobs: int
+    query: str,
+    location: str,
+    max_jobs: int,
+    company_ids_override: Sequence[str] | None = None,
+    scrolls_per_listing_page_override: int | None = None,
 ) -> list[tuple[str, str]]:
     """Return up to max_jobs (raw_html, canonical_url) pairs for the query."""
     config = load_site_config("linkedin")
     selectors = config["selectors"]
-    search_url = _build_search_url(config, query, location)
+    search_url = _build_search_url(config, query, location, company_ids_override)
     base_url = config["base_url"]
     min_delay = float(config.get("min_delay_seconds", 4))
     max_delay = float(config.get("max_delay_seconds", 10))
     scroll_depth = int(config.get("scroll_load_depth", 3000))
     listing_page_size = int(config.get("listing_page_size", LINKEDIN_PAGE_SIZE))
-    scrolls_per_listing_page = int(
-        config.get("scrolls_per_listing_page", SCROLLS_PER_LISTING_PAGE)
+    scrolls_per_listing_page = (
+        scrolls_per_listing_page_override
+        if scrolls_per_listing_page_override is not None
+        else int(config.get("scrolls_per_listing_page", SCROLLS_PER_LISTING_PAGE))
     )
     max_listing_pages = max(
         (max_jobs // listing_page_size) + LISTING_PAGE_BUFFER + 1,

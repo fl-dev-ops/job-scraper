@@ -63,6 +63,26 @@ def test_build_search_url_adds_linkedin_company_ids_to_native_filter() -> None:
     )
 
 
+def test_build_search_url_can_override_company_ids_for_per_company_runs() -> None:
+    url = _build_search_url(
+        config={
+            "search_url": (
+                "https://www.linkedin.com/jobs/search?"
+                "keywords={query}&location={location}&f_TPR=r2592000&f_C=old"
+            ),
+            "company_ids": ["1586", "1441"],
+        },
+        query="software engineer",
+        location="India",
+        company_ids_override=["1035"],
+    )
+
+    assert url == (
+        "https://www.linkedin.com/jobs/search?"
+        "keywords=software+engineer&location=India&f_TPR=r2592000&f_C=1035"
+    )
+
+
 def test_build_paginated_search_url_advances_listing_window() -> None:
     url = _build_paginated_search_url(
         (

@@ -3,10 +3,11 @@
 
 base_url: "https://www.linkedin.com"
 # Guest jobs search URL — no login required.
-# f_E=2          → Entry Level seniority filter (LinkedIn's own classification)
 # f_TPR=r2592000 → posted in last 30 days
+# f_E=2          → Entry level seniority filter (LinkedIn's own classification)
+# LinkedIn's f_E bucket is coarse, so still filter later from extracted JD fields.
 # Location is appended in the fetcher; keywords goes via {query} placeholder.
-search_url: "https://www.linkedin.com/jobs/search?keywords={query}&location={location}&f_E=2%2C3&f_TPR=r2592000&position=1&pageNum=0"
+search_url: "https://www.linkedin.com/jobs/search?keywords={query}&location={location}&f_E=2&f_TPR=r2592000&position=1&pageNum=0"
 
 queries:
   - "Fresher jobs"
@@ -22,9 +23,47 @@ queries:
 # Native LinkedIn Company filter. These are LinkedIn company IDs used in f_C.
 company_ids:
   - "1586" # Amazon
+  - "1441" # Google
+  - "1035" # Microsoft
+  - "1480" # Adobe
+  - "321062" # Flipkart
+  - "1283" # Infosys
   - "1353" # TCS
+  - "1756" # HCLTech
+  - "164182" # Hexaware Technologies
+  - "86813252" # LTIMindtree
+  - "9215331" # Accenture in India
+  - "18144942" # Accenture Japan
+  - "1028" # Oracle
+  - "3185" # Salesforce
+  - "29352" # ServiceNow
+  - "2017" # Qualcomm
+  - "17763" # MediaTek
+  - "1009" # IBM
+  - "2553488" # BrowserStack
+  - "4972" # EPAM Systems
+  - "2010798" # Tiger Analytics
+  - "26945" # Fractal
+  - "6508" # D. E. Shaw
+  - "18846814" # Turing
+  - "1194036" # MathWorks
+  - "1482" # PayPal
+  - "1195173" # Phenom
+  - "20688" # MAQ Software
+  - "103869" # Incture
+  - "422813" # Zomato
+  - "78087354" # Physics Wallah
+  - "125048" # ZL Tech
+  - "236997" # Centre for Computational Technologies (CCTech)
+  - "2457" # Synopsys
+  - "5208967" # Tredence
+  - "3246461" # Tudip Technologies
+  - "18517989" # Vecmocon Technologies
 
-seniority_filter: "2%2C3" # f_E LinkedIn URL param — Entry level
+# TODO: Resolve and add primary LinkedIn company ID for RoshAi.
+
+# LinkedIn seniority is prefiltered with f_E=2 in search_url. Filter again later
+# from extracted experience_min_years / experience_max_years for accuracy.
 
 # Selectors for the GUEST view (not the logged-in app).
 # Used for navigation, JD body extraction, and deterministic top-card overrides.
