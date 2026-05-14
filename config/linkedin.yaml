@@ -78,6 +78,7 @@ selectors:
   location_selector: "span.topcard__flavor--bullet"
 
 # Extraction / pipeline knobs
+parallel_scrape: 3 # max concurrent full LinkedIn job scrape + LLM + write flows
 parallel_extractions: 5 # max concurrent LLM extraction tasks per query
 
 # Anti-detection knobs

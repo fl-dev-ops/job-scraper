@@ -103,9 +103,7 @@ def _build_search_url(
 def _build_paginated_search_url(search_url: str, page_index: int, page_size: int) -> str:
     parsed = urlsplit(search_url)
     params = [
-        (key, value)
-        for key, value in parse_qsl(parsed.query)
-        if key not in {"pageNum", "start"}
+        (key, value) for key, value in parse_qsl(parsed.query) if key not in {"pageNum", "start"}
     ]
     params.append(("pageNum", str(page_index)))
     params.append(("start", str(page_index * page_size)))
@@ -190,89 +188,19 @@ def fetch_linkedin(
     """Return up to max_jobs (raw_html, canonical_url) pairs for the query."""
     config = load_site_config("linkedin")
     selectors = config["selectors"]
-    search_url = _build_search_url(config, query, location, company_ids_override)
-    base_url = config["base_url"]
     min_delay = float(config.get("min_delay_seconds", 4))
     max_delay = float(config.get("max_delay_seconds", 10))
-    scroll_depth = int(config.get("scroll_load_depth", 3000))
-    listing_page_size = int(config.get("listing_page_size", LINKEDIN_PAGE_SIZE))
-    scrolls_per_listing_page = (
-        scrolls_per_listing_page_override
-        if scrolls_per_listing_page_override is not None
-        else int(config.get("scrolls_per_listing_page", SCROLLS_PER_LISTING_PAGE))
-    )
-    max_listing_pages = max(
-        (max_jobs // listing_page_size) + LISTING_PAGE_BUFFER + 1,
-        1,
+    urls = collect_linkedin_urls(
+        query,
+        location,
+        max_jobs,
+        company_ids_override=company_ids_override,
+        scrolls_per_listing_page_override=scrolls_per_listing_page_override,
     )
 
     results: list[tuple[str, str]] = []
-
     sb = open_pure_cdp_browser("linkedin", config)
     try:
-        # Collect detail URLs by processing one paginated listing window at a time.
-        seen: set[str] = set()
-        urls: list[str] = []
-        for page_index in range(max_listing_pages):
-            page_url = _build_paginated_search_url(
-                search_url,
-                page_index=page_index,
-                page_size=listing_page_size,
-            )
-            log.info("linkedin_search", url=page_url, query=query, page_index=page_index)
-            open_page(sb, page_url)
-            human_sleep(min_delay, max_delay)
-
-            signal = _is_blocked(sb)
-            if signal:
-                log.warning(
-                    "block_signal",
-                    signal=signal,
-                    stage="listing",
-                    page_index=page_index,
-                )
-                break
-
-            page_start_count = len(urls)
-            for scroll_index in range(scrolls_per_listing_page):
-                listing_html = page_html(sb)
-                urls.extend(
-                    _collect_listing_urls_from_html(
-                        html=listing_html,
-                        selectors=selectors,
-                        base_url=base_url,
-                        seen=seen,
-                        max_jobs=max_jobs - len(urls),
-                    )
-                )
-                log.info(
-                    "scroll_progress",
-                    page_index=page_index,
-                    scroll_index=scroll_index,
-                    collected=len(urls),
-                    target=max_jobs,
-                )
-                if len(urls) >= max_jobs:
-                    break
-                _run_js(sb, f"window.scrollBy(0, {scroll_depth});")
-                human_sleep(min_delay, max_delay)
-
-            log.info(
-                "listing_page_done",
-                page_index=page_index,
-                collected=len(urls),
-                page_new=len(urls) - page_start_count,
-                target=max_jobs,
-            )
-            if len(urls) >= max_jobs:
-                break
-            if len(urls) == page_start_count:
-                log.info("no_listing_results", page_index=page_index)
-                break
-
-        log.info("listing_done", collected=len(urls))
-
-        # Detail pages
         jd_selector = selectors["jd_body"]
         for idx, url in enumerate(urls[:max_jobs]):
             try:
@@ -296,6 +224,125 @@ def fetch_linkedin(
         close_pure_cdp_browser(sb)
 
     return results
+
+
+def collect_linkedin_urls_in_browser(
+    sb: Any,
+    config: dict[str, Any],
+    query: str,
+    location: str,
+    max_jobs: int,
+    seen_urls: set[str] | None = None,
+    company_ids_override: Sequence[str] | None = None,
+    scrolls_per_listing_page_override: int | None = None,
+) -> list[str]:
+    """Return up to max_jobs canonical detail URLs using an already-open browser.
+
+    *seen_urls* is shared across calls so that successive queries for the same
+    site skip URLs already collected by earlier queries.
+    """
+    selectors = config["selectors"]
+    search_url = _build_search_url(config, query, location, company_ids_override)
+    base_url = config["base_url"]
+    min_delay = float(config.get("min_delay_seconds", 4))
+    max_delay = float(config.get("max_delay_seconds", 10))
+    scroll_depth = int(config.get("scroll_load_depth", 3000))
+    listing_page_size = int(config.get("listing_page_size", LINKEDIN_PAGE_SIZE))
+    scrolls_per_listing_page = (
+        scrolls_per_listing_page_override
+        if scrolls_per_listing_page_override is not None
+        else int(config.get("scrolls_per_listing_page", SCROLLS_PER_LISTING_PAGE))
+    )
+    max_listing_pages = max(
+        (max_jobs // listing_page_size) + LISTING_PAGE_BUFFER + 1,
+        1,
+    )
+
+    seen = seen_urls if seen_urls is not None else set()
+    urls: list[str] = []
+    for page_index in range(max_listing_pages):
+        page_url = _build_paginated_search_url(
+            search_url,
+            page_index=page_index,
+            page_size=listing_page_size,
+        )
+        log.info("linkedin_search", url=page_url, query=query, page_index=page_index)
+        open_page(sb, page_url)
+        human_sleep(min_delay, max_delay)
+
+        signal = _is_blocked(sb)
+        if signal:
+            log.warning(
+                "block_signal",
+                signal=signal,
+                stage="listing",
+                page_index=page_index,
+            )
+            break
+
+        page_start_count = len(urls)
+        for scroll_index in range(scrolls_per_listing_page):
+            listing_html = page_html(sb)
+            urls.extend(
+                _collect_listing_urls_from_html(
+                    html=listing_html,
+                    selectors=selectors,
+                    base_url=base_url,
+                    seen=seen,
+                    max_jobs=max_jobs - len(urls),
+                )
+            )
+            log.info(
+                "scroll_progress",
+                page_index=page_index,
+                scroll_index=scroll_index,
+                collected=len(urls),
+                target=max_jobs,
+            )
+            if len(urls) >= max_jobs:
+                break
+            _run_js(sb, f"window.scrollBy(0, {scroll_depth});")
+            human_sleep(min_delay, max_delay)
+
+        log.info(
+            "listing_page_done",
+            page_index=page_index,
+            collected=len(urls),
+            page_new=len(urls) - page_start_count,
+            target=max_jobs,
+        )
+        if len(urls) >= max_jobs:
+            break
+        if len(urls) == page_start_count:
+            log.info("no_listing_results", page_index=page_index)
+            break
+
+    log.info("listing_done", query=query, collected=len(urls))
+    return urls[:max_jobs]
+
+
+def collect_linkedin_urls(
+    query: str,
+    location: str,
+    max_jobs: int,
+    company_ids_override: Sequence[str] | None = None,
+    scrolls_per_listing_page_override: int | None = None,
+) -> list[str]:
+    """Return up to max_jobs canonical detail URLs for the query."""
+    config = load_site_config("linkedin")
+    sb = open_pure_cdp_browser("linkedin", config)
+    try:
+        return collect_linkedin_urls_in_browser(
+            sb,
+            config,
+            query,
+            location,
+            max_jobs,
+            company_ids_override=company_ids_override,
+            scrolls_per_listing_page_override=scrolls_per_listing_page_override,
+        )
+    finally:
+        close_pure_cdp_browser(sb)
 
 
 def _detail_ready(sb: Any, jd_selector: str) -> bool:
