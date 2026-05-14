@@ -13,7 +13,7 @@ Naukri has weak bot detection; no proxies needed for typical volumes.
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from selectolax.parser import HTMLParser
 
@@ -30,17 +30,43 @@ from .browser import capture_detail_html, fetch_detail_url, open_page, page_html
 log = get_logger("naukri")
 
 
-def _build_search_url(template: str, query: str, location: str) -> str:
-    hyphenated_query = "-".join(query.strip().split())
-    if location and location.lower() not in ("india", ""):
-        hyphenated_loc = "-".join(location.strip().split()).lower()
-        # Naukri path format: /{query}-jobs-in-{location}
-        path_url = template.replace(
-            f"{hyphenated_query}-jobs",
-            f"{hyphenated_query}-jobs-in-{hyphenated_loc}",
-        )
-        return path_url
-    return template.format(query=hyphenated_query)
+def _slugify(value: str) -> str:
+    return "-".join(value.strip().lower().split())
+
+
+def _query_path_slug(query: str) -> str:
+    tokens = query.strip().split()
+    if tokens and tokens[-1].lower() == "jobs":
+        tokens = tokens[:-1]
+    return _slugify(" ".join(tokens))
+
+
+def _build_search_url(
+    template: str,
+    query: str,
+    location: str,
+    company_name: str | None = None,
+) -> str:
+    effective_query = query.strip()
+    if company_name and company_name.strip():
+        effective_query = f"{effective_query} at {company_name.strip()}"
+
+    parsed = urlparse(template.format(query=_query_path_slug(effective_query)))
+    query_slug = _query_path_slug(effective_query)
+    location_slug = _slugify(location)
+
+    path = f"/{query_slug}-jobs"
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    params["k"] = effective_query
+
+    if location_slug and location_slug != "india":
+        path = f"{path}-in-{location_slug}"
+        params["l"] = location.strip()
+    else:
+        params.pop("l", None)
+
+    encoded_params = urlencode(params).replace("+", "%20")
+    return urlunparse(parsed._replace(path=path, query=encoded_params))
 
 
 def _collect_listing_urls_from_html(
@@ -75,22 +101,21 @@ def _has_selector(sb: Any, selector: str) -> bool:
 
 
 def fetch_naukri(
-    query: str, location: str, max_jobs: int
+    query: str,
+    location: str,
+    max_jobs: int,
+    company_name: str | None = None,
 ) -> list[tuple[str, str]]:
     """Return up to max_jobs (raw_html, canonical_url) pairs for the query."""
     config = load_site_config("naukri")
     selectors = config["selectors"]
     base_url = config["base_url"]
-    search_url = _build_search_url(
-        config["search_url"].format(query="-".join(query.strip().split())),
-        query,
-        location,
-    )
+    search_url = _build_search_url(config["search_url"], query, location, company_name)
     min_delay = float(config.get("min_delay_seconds", 3))
     max_delay = float(config.get("max_delay_seconds", 8))
 
     results: list[tuple[str, str]] = []
-    log.info("naukri_search", url=search_url, query=query)
+    log.info("naukri_search", url=search_url, query=query, company=company_name)
 
     sb = open_pure_cdp_browser("naukri", config)
     try:
