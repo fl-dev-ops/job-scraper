@@ -33,6 +33,7 @@ from ..utils.seleniumbase_compat import (
 )
 from .base import load_site_config
 from .browser import capture_detail_html, fetch_detail_url, open_page, page_html
+from .browser_context import browser_session, get_browser, has_browser
 
 log = get_logger("linkedin")
 
@@ -185,12 +186,49 @@ def fetch_linkedin(
     company_ids_override: Sequence[str] | None = None,
     scrolls_per_listing_page_override: int | None = None,
 ) -> list[tuple[str, str]]:
-    """Return up to max_jobs (raw_html, canonical_url) pairs for the query."""
+    """Return up to max_jobs (raw_html, canonical_url) pairs for the query.
+
+    Uses the shared browser from context if one is active; otherwise opens
+    and closes its own browser instance.
+    """
+    if has_browser():
+        return _fetch_linkedin_impl(
+            query,
+            location,
+            max_jobs,
+            company_ids_override=company_ids_override,
+            scrolls_per_listing_page_override=scrolls_per_listing_page_override,
+        )
+
     config = load_site_config("linkedin")
+    sb = open_pure_cdp_browser("linkedin", config)
+    try:
+        with browser_session(sb, config):
+            return _fetch_linkedin_impl(
+                query,
+                location,
+                max_jobs,
+                company_ids_override=company_ids_override,
+                scrolls_per_listing_page_override=scrolls_per_listing_page_override,
+            )
+    finally:
+        close_pure_cdp_browser(sb)
+
+
+def _fetch_linkedin_impl(
+    query: str,
+    location: str,
+    max_jobs: int,
+    company_ids_override: Sequence[str] | None = None,
+    scrolls_per_listing_page_override: int | None = None,
+) -> list[tuple[str, str]]:
+    sb, config = get_browser()
     selectors = config["selectors"]
     min_delay = float(config.get("min_delay_seconds", 4))
     max_delay = float(config.get("max_delay_seconds", 10))
-    urls = collect_linkedin_urls(
+    urls = _collect_linkedin_urls_impl(
+        sb,
+        config,
         query,
         location,
         max_jobs,
@@ -199,34 +237,30 @@ def fetch_linkedin(
     )
 
     results: list[tuple[str, str]] = []
-    sb = open_pure_cdp_browser("linkedin", config)
-    try:
-        jd_selector = selectors["jd_body"]
-        for idx, url in enumerate(urls[:max_jobs]):
-            try:
-                html = capture_detail_html(
-                    sb,
-                    url,
-                    jd_selector,
-                    min_delay,
-                    max_delay,
-                    log,
-                    ready_check=_detail_ready,
-                )
-                if html is None:
-                    break
-                results.append((html, url))
-                log.info("detail_fetched", idx=idx, url=url)
-            except Exception as e:  # noqa: BLE001 — best-effort detail capture
-                log.warning("detail_failed", url=url, error=str(e))
-                continue
-    finally:
-        close_pure_cdp_browser(sb)
+    jd_selector = selectors["jd_body"]
+    for idx, url in enumerate(urls[:max_jobs]):
+        try:
+            html = capture_detail_html(
+                sb,
+                url,
+                jd_selector,
+                min_delay,
+                max_delay,
+                log,
+                ready_check=_detail_ready,
+            )
+            if html is None:
+                break
+            results.append((html, url))
+            log.info("detail_fetched", idx=idx, url=url)
+        except Exception as e:  # noqa: BLE001 — best-effort detail capture
+            log.warning("detail_failed", url=url, error=str(e))
+            continue
 
     return results
 
 
-def collect_linkedin_urls_in_browser(
+def _collect_linkedin_urls_impl(
     sb: Any,
     config: dict[str, Any],
     query: str,
@@ -328,11 +362,14 @@ def collect_linkedin_urls(
     company_ids_override: Sequence[str] | None = None,
     scrolls_per_listing_page_override: int | None = None,
 ) -> list[str]:
-    """Return up to max_jobs canonical detail URLs for the query."""
-    config = load_site_config("linkedin")
-    sb = open_pure_cdp_browser("linkedin", config)
-    try:
-        return collect_linkedin_urls_in_browser(
+    """Return up to max_jobs canonical detail URLs for the query.
+
+    Uses the shared browser from context if one is active; otherwise opens
+    and closes its own browser instance.
+    """
+    if has_browser():
+        sb, config = get_browser()
+        return _collect_linkedin_urls_impl(
             sb,
             config,
             query,
@@ -341,6 +378,20 @@ def collect_linkedin_urls(
             company_ids_override=company_ids_override,
             scrolls_per_listing_page_override=scrolls_per_listing_page_override,
         )
+
+    config = load_site_config("linkedin")
+    sb = open_pure_cdp_browser("linkedin", config)
+    try:
+        with browser_session(sb, config):
+            return _collect_linkedin_urls_impl(
+                sb,
+                config,
+                query,
+                location,
+                max_jobs,
+                company_ids_override=company_ids_override,
+                scrolls_per_listing_page_override=scrolls_per_listing_page_override,
+            )
     finally:
         close_pure_cdp_browser(sb)
 

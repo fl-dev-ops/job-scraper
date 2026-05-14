@@ -26,6 +26,7 @@ from ..utils.seleniumbase_compat import (
 )
 from .base import load_site_config
 from .browser import capture_detail_html, fetch_detail_url, open_page, page_html
+from .browser_context import browser_session, get_browser, has_browser
 
 log = get_logger("naukri")
 
@@ -106,8 +107,30 @@ def fetch_naukri(
     max_jobs: int,
     company_name: str | None = None,
 ) -> list[tuple[str, str]]:
-    """Return up to max_jobs (raw_html, canonical_url) pairs for the query."""
+    """Return up to max_jobs (raw_html, canonical_url) pairs for the query.
+
+    Uses the shared browser from context if one is active; otherwise opens
+    and closes its own browser instance.
+    """
+    if has_browser():
+        return _fetch_naukri_impl(query, location, max_jobs, company_name)
+
     config = load_site_config("naukri")
+    sb = open_pure_cdp_browser("naukri", config)
+    try:
+        with browser_session(sb, config):
+            return _fetch_naukri_impl(query, location, max_jobs, company_name)
+    finally:
+        close_pure_cdp_browser(sb)
+
+
+def _fetch_naukri_impl(
+    query: str,
+    location: str,
+    max_jobs: int,
+    company_name: str | None = None,
+) -> list[tuple[str, str]]:
+    sb, config = get_browser()
     selectors = config["selectors"]
     base_url = config["base_url"]
     search_url = _build_search_url(config["search_url"], query, location, company_name)
@@ -117,57 +140,53 @@ def fetch_naukri(
     results: list[tuple[str, str]] = []
     log.info("naukri_search", url=search_url, query=query, company=company_name)
 
-    sb = open_pure_cdp_browser("naukri", config)
-    try:
-        open_page(sb, search_url)
+    open_page(sb, search_url)
+    human_sleep(min_delay, max_delay)
+
+    seen: set[str] = set()
+    urls: list[str] = []
+
+    while len(urls) < max_jobs:
+        urls.extend(
+            _collect_listing_urls_from_html(
+                html=page_html(sb),
+                selectors=selectors,
+                base_url=base_url,
+                seen=seen,
+                max_jobs=max_jobs - len(urls),
+            )
+        )
+
+        log.info("listing_progress", collected=len(urls), target=max_jobs)
+        if len(urls) >= max_jobs:
+            break
+
+        if not _has_selector(sb, selectors["pagination_next"]):
+            log.info("no_next_page")
+            break
+        sb.click(selectors["pagination_next"])
         human_sleep(min_delay, max_delay)
 
-        seen: set[str] = set()
-        urls: list[str] = []
+    log.info("listing_done", collected=len(urls))
 
-        while len(urls) < max_jobs:
-            urls.extend(
-                _collect_listing_urls_from_html(
-                    html=page_html(sb),
-                    selectors=selectors,
-                    base_url=base_url,
-                    seen=seen,
-                    max_jobs=max_jobs - len(urls),
-                )
+    jd_selector = selectors["jd_body"]
+    for idx, url in enumerate(urls[:max_jobs]):
+        try:
+            html = capture_detail_html(
+                sb,
+                url,
+                jd_selector,
+                min_delay,
+                max_delay,
+                log,
             )
-
-            log.info("listing_progress", collected=len(urls), target=max_jobs)
-            if len(urls) >= max_jobs:
-                break
-
-            if not _has_selector(sb, selectors["pagination_next"]):
-                log.info("no_next_page")
-                break
-            sb.click(selectors["pagination_next"])
-            human_sleep(min_delay, max_delay)
-
-        log.info("listing_done", collected=len(urls))
-
-        jd_selector = selectors["jd_body"]
-        for idx, url in enumerate(urls[:max_jobs]):
-            try:
-                html = capture_detail_html(
-                    sb,
-                    url,
-                    jd_selector,
-                    min_delay,
-                    max_delay,
-                    log,
-                )
-                if html is None:
-                    continue
-                results.append((html, url))
-                log.info("detail_fetched", idx=idx, url=url)
-            except Exception as e:  # noqa: BLE001
-                log.warning("detail_failed", url=url, error=str(e))
+            if html is None:
                 continue
-    finally:
-        close_pure_cdp_browser(sb)
+            results.append((html, url))
+            log.info("detail_fetched", idx=idx, url=url)
+        except Exception as e:  # noqa: BLE001
+            log.warning("detail_failed", url=url, error=str(e))
+            continue
 
     return results
 

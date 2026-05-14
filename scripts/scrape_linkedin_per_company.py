@@ -18,11 +18,13 @@ from dotenv import load_dotenv
 
 from job_scraper.extractor import JobExtractor, build_extractor
 from job_scraper.fetchers.base import load_site_config
+from job_scraper.fetchers.browser_context import browser_session
 from job_scraper.fetchers.linkedin import fetch_linkedin
 from job_scraper.normalizer import compute_job_id, normalize_posting
 from job_scraper.schema import JobPosting
 from job_scraper.storage import get_output_path, write
 from job_scraper.utils.logging import configure_logging, get_logger
+from job_scraper.utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LINKEDIN_CONFIG = PROJECT_ROOT / "config" / "linkedin.yaml"
@@ -208,7 +210,45 @@ async def scrape_company_query(
     return written
 
 
-async def scrape_all(
+async def _run_scrape_loop(
+    companies: list[LinkedInCompany],
+    queries: list[str],
+    location: str,
+    max_jobs: int,
+    scrolls_per_page: int,
+    site_config: dict[str, Any],
+    extractor: JobExtractor,
+    semaphore: asyncio.Semaphore,
+    seen_ids: set[str],
+    log: Any,
+) -> int:
+    """Run the scraping loop inside an active browser_session."""
+    total_written = 0
+    for company in companies:
+        company_written = 0
+        for current_query in queries:
+            company_written += await scrape_company_query(
+                company,
+                current_query,
+                location,
+                max_jobs,
+                scrolls_per_page,
+                site_config,
+                extractor,
+                semaphore,
+                seen_ids,
+            )
+        total_written += company_written
+        log.info(
+            "company_done",
+            company=company.name,
+            company_id=company.company_id,
+            written=company_written,
+        )
+    return total_written
+
+
+def scrape_all(
     *,
     location: str,
     max_jobs: int,
@@ -233,40 +273,36 @@ async def scrape_all(
 
     parallelism = int(site_config.get("parallel_extractions", 5))
     extractor = build_extractor()
-    semaphore = asyncio.Semaphore(parallelism)
-    seen_ids: set[str] = set()
     log = get_logger("linkedin_per_company")
 
-    total_written = 0
-    for company in companies:
-        company_written = 0
-        for query in queries:
-            company_written += await scrape_company_query(
-                company,
-                query,
-                location,
-                max_jobs,
-                scrolls_per_page,
-                site_config,
-                extractor,
-                semaphore,
-                seen_ids,
+    sb = open_pure_cdp_browser("linkedin", site_config)
+    try:
+        with browser_session(sb, site_config):
+            seen_ids: set[str] = set()
+            written = asyncio.run(
+                _run_scrape_loop(
+                    companies,
+                    queries,
+                    location,
+                    max_jobs,
+                    scrolls_per_page,
+                    site_config,
+                    extractor,
+                    asyncio.Semaphore(parallelism),
+                    seen_ids,
+                    log,
+                )
             )
-        total_written += company_written
-        log.info(
-            "company_done",
-            company=company.name,
-            company_id=company.company_id,
-            written=company_written,
-        )
+    finally:
+        close_pure_cdp_browser(sb)
 
     log.info(
         "per_company_scrape_done",
         companies=len(companies),
         queries=len(queries),
-        total_written=total_written,
+        total_written=written,
     )
-    return total_written
+    return written
 
 
 def main() -> None:
@@ -292,15 +328,13 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging(args.log_level)
-    asyncio.run(
-        scrape_all(
-            location=args.location,
-            max_jobs=args.max,
-            scrolls_per_page=args.scrolls_per_page,
-            start_company=args.start_company,
-            limit_companies=args.limit_companies,
-            limit_queries=args.limit_queries,
-        )
+    scrape_all(
+        location=args.location,
+        max_jobs=args.max,
+        scrolls_per_page=args.scrolls_per_page,
+        start_company=args.start_company,
+        limit_companies=args.limit_companies,
+        limit_queries=args.limit_queries,
     )
 
 

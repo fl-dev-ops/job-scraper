@@ -20,7 +20,8 @@ from ..utils.logging import get_logger
 from ..utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 from .base import load_site_config
 from .browser import capture_detail_html
-from .linkedin import _detail_ready, collect_linkedin_urls_in_browser
+from .browser_context import browser_session
+from .linkedin import _collect_linkedin_urls_impl, _detail_ready
 
 log = get_logger("linkedin")
 
@@ -149,7 +150,7 @@ async def _scrape_linkedin_urls_for_query(
     for result in results:
         if isinstance(result, Exception):
             log.error("linkedin_job_task_failed", error=str(result))
-        else:
+        elif isinstance(result, int):
             written += result
     return written
 
@@ -177,38 +178,39 @@ def run_linkedin_site(
     seen_listing_urls: set[str] = set()
     written = 0
     try:
-        for query in queries:
-            log.info(
-                "query_start",
-                query=query,
-                max_per_query=max_jobs,
-                parallel_scrape=parallel_scrape,
-            )
-            try:
-                urls = collect_linkedin_urls_in_browser(
-                    listing_sb,
-                    listing_config,
-                    query,
-                    location,
-                    max_jobs,
-                    seen_urls=seen_listing_urls,
-                )
-            except Exception as e:  # noqa: BLE001
-                log.error("url_collection_crashed", query=query, error=str(e))
-                continue
-
-            log.info("linkedin_urls_collected", query=query, urls=len(urls))
-            written += asyncio.run(
-                _scrape_linkedin_urls_for_query(
-                    urls=urls,
-                    browser_opener=open_linkedin_detail_browser,
-                    browser_fetcher=fetch_linkedin_detail_in_browser,
-                    browser_closer=close_linkedin_detail_browser,
-                    extract_and_write=extract_and_write,
-                    seen_ids=seen_ids,
+        with browser_session(listing_sb, listing_config):
+            for query in queries:
+                log.info(
+                    "query_start",
+                    query=query,
+                    max_per_query=max_jobs,
                     parallel_scrape=parallel_scrape,
                 )
-            )
+                try:
+                    urls = _collect_linkedin_urls_impl(
+                        listing_sb,
+                        listing_config,
+                        query,
+                        location,
+                        max_jobs,
+                        seen_urls=seen_listing_urls,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.error("url_collection_crashed", query=query, error=str(e))
+                    continue
+
+                log.info("linkedin_urls_collected", query=query, urls=len(urls))
+                written += asyncio.run(
+                    _scrape_linkedin_urls_for_query(
+                        urls=urls,
+                        browser_opener=open_linkedin_detail_browser,
+                        browser_fetcher=fetch_linkedin_detail_in_browser,
+                        browser_closer=close_linkedin_detail_browser,
+                        extract_and_write=extract_and_write,
+                        seen_ids=seen_ids,
+                        parallel_scrape=parallel_scrape,
+                    )
+                )
     finally:
         close_linkedin_detail_browser(listing_sb)
 

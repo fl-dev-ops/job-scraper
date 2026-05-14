@@ -9,7 +9,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from typing import Annotated, Any
 
 import typer
@@ -27,8 +26,6 @@ load_dotenv()
 app = typer.Typer(name="job-scraper", add_completion=False)
 
 SUPPORTED_SITES: tuple[str, ...] = ("naukri", "indeed", "linkedin")
-SearchFetcher = Callable[[str, str, int], list[tuple[str, str]]]
-DetailFetcher = Callable[[str], list[tuple[str, str]]]
 
 
 def _selector_list(value: object) -> list[str] | None:
@@ -167,36 +164,26 @@ def _run_for_site(
     llm_context_selectors = _selector_list(site_config["selectors"].get("llm_context_selector"))
     parallelism = int(site_config.get("parallel_extractions", 5))
 
-    fetcher: SearchFetcher
-    detail_fetcher: DetailFetcher
-    if site == "linkedin":
-        from .fetchers.linkedin import fetch_linkedin, fetch_linkedin_url
-
-        fetcher = fetch_linkedin
-        detail_fetcher = fetch_linkedin_url
-    elif site == "naukri":
-        from .fetchers.naukri import fetch_naukri, fetch_naukri_url
-
-        fetcher = fetch_naukri
-        detail_fetcher = fetch_naukri_url
-    elif site == "indeed":
-        from .fetchers.indeed import _expand_company_queries, fetch_indeed, fetch_indeed_url
-
-        fetcher = fetch_indeed
-        detail_fetcher = fetch_indeed_url
-        queries = _expand_company_queries(
-            queries,
-            [str(company) for company in site_config.get("company_names", [])],
-        )
-    else:
-        log.error("fetcher_not_implemented", site=site)
-        return 0
-
-    extractor = build_extractor()
-    written = 0
-    seen_ids: set[str] = set()
-
+    # ── Single-URL mode: open/close a browser just for that URL ────────
     if url:
+        if site == "linkedin":
+            from .fetchers.linkedin import fetch_linkedin_url
+
+            detail_fetcher = fetch_linkedin_url
+        elif site == "naukri":
+            from .fetchers.naukri import fetch_naukri_url
+
+            detail_fetcher = fetch_naukri_url
+        elif site == "indeed":
+            from .fetchers.indeed import fetch_indeed_url
+
+            detail_fetcher = fetch_indeed_url
+        else:
+            log.error("fetcher_not_implemented", site=site)
+            return 0
+
+        extractor = build_extractor()
+        seen_ids: set[str] = set()
         pages = detail_fetcher(url)
         log.info("fetched", query="url", pages=len(pages))
         written = asyncio.run(
@@ -220,6 +207,9 @@ def _run_for_site(
     # ── LinkedIn + --parallel: concurrent detail scraping ────────────────
     if site == "linkedin" and parallel:
         from .fetchers.linkedin_parallel import run_linkedin_site
+
+        extractor = build_extractor()
+        seen_ids: set[str] = set()
 
         async def _extract_and_write_linkedin(html: str, url: str) -> JobPosting | None:
             return await _extract_and_write_one(
@@ -246,31 +236,65 @@ def _run_for_site(
         log.info("site_done", site=site, written=written)
         return written
 
-    # ── Default: sequential fetch per query, parallel LLM extraction ────
-    for query in queries:
-        log.info("query_start", query=query, max_per_query=max_jobs, parallelism=parallelism)
-        try:
-            pages = fetcher(query, location, max_jobs)
-        except Exception as e:  # noqa: BLE001
-            log.error("fetcher_crashed", query=query, error=str(e))
-            continue
+    # ── Default: one browser for all queries via browser_session ─────────
+    from .utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
+    from .fetchers.browser_context import browser_session
 
-        log.info("fetched", query=query, pages=len(pages))
-        written += asyncio.run(
-            _extract_pages_for_site(
-                site=site,
-                pages=pages,
-                query=query,
-                extractor=extractor,
-                jd_selector=jd_selector,
-                title_selector=title_selector,
-                location_selector=location_selector,
-                company_selector=company_selector,
-                llm_context_selectors=llm_context_selectors,
-                parallelism=parallelism,
-                seen_ids=seen_ids,
-            )
+    if site == "linkedin":
+        from .fetchers.linkedin import fetch_linkedin
+
+        fetcher = fetch_linkedin
+    elif site == "naukri":
+        from .fetchers.naukri import fetch_naukri
+
+        fetcher = fetch_naukri
+    elif site == "indeed":
+        from .fetchers.indeed import _expand_company_queries, fetch_indeed
+
+        fetcher = fetch_indeed
+        queries = _expand_company_queries(
+            queries,
+            [str(company) for company in site_config.get("company_names", [])],
         )
+    else:
+        log.error("fetcher_not_implemented", site=site)
+        return 0
+
+    extractor = build_extractor()
+    written = 0
+    seen_ids: set[str] = set()
+
+    sb = open_pure_cdp_browser(site, site_config)
+    try:
+        with browser_session(sb, site_config):
+            for query in queries:
+                log.info(
+                    "query_start", query=query, max_per_query=max_jobs, parallelism=parallelism
+                )
+                try:
+                    pages = fetcher(query, location, max_jobs)
+                except Exception as e:  # noqa: BLE001
+                    log.error("fetcher_crashed", query=query, error=str(e))
+                    continue
+
+                log.info("fetched", query=query, pages=len(pages))
+                written += asyncio.run(
+                    _extract_pages_for_site(
+                        site=site,
+                        pages=pages,
+                        query=query,
+                        extractor=extractor,
+                        jd_selector=jd_selector,
+                        title_selector=title_selector,
+                        location_selector=location_selector,
+                        company_selector=company_selector,
+                        llm_context_selectors=llm_context_selectors,
+                        parallelism=parallelism,
+                        seen_ids=seen_ids,
+                    )
+                )
+    finally:
+        close_pure_cdp_browser(sb)
 
     log.info("site_done", site=site, written=written)
     return written

@@ -20,6 +20,7 @@ from ..utils.pacing import human_sleep
 from ..utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 from .base import load_site_config
 from .browser import fetch_detail_url
+from .browser_context import browser_session, get_browser, has_browser
 
 log = get_logger("indeed")
 
@@ -38,11 +39,7 @@ def _expand_company_queries(queries: list[str], company_names: list[str]) -> lis
     companies = [company_name.strip() for company_name in company_names if company_name.strip()]
     if not companies:
         return queries
-    return [
-        f'{query} company:"{company_name}"'
-        for query in queries
-        for company_name in companies
-    ]
+    return [f'{query} company:"{company_name}"' for query in queries for company_name in companies]
 
 
 def _page_title(sb: Any) -> str:
@@ -163,11 +160,26 @@ def _normalize_job_url(base_url: str, href: str) -> str:
     return absolute
 
 
-def fetch_indeed(
-    query: str, location: str, max_jobs: int
-) -> list[tuple[str, str]]:
-    """Return up to max_jobs (raw_html, canonical_url) pairs for the query."""
+def fetch_indeed(query: str, location: str, max_jobs: int) -> list[tuple[str, str]]:
+    """Return up to max_jobs (raw_html, canonical_url) pairs for the query.
+
+    Uses the shared browser from context if one is active; otherwise opens
+    and closes its own browser instance.
+    """
+    if has_browser():
+        return _fetch_indeed_impl(query, location, max_jobs)
+
     config = load_site_config("indeed")
+    sb = open_pure_cdp_browser("indeed", config)
+    try:
+        with browser_session(sb, config):
+            return _fetch_indeed_impl(query, location, max_jobs)
+    finally:
+        close_pure_cdp_browser(sb)
+
+
+def _fetch_indeed_impl(query: str, location: str, max_jobs: int) -> list[tuple[str, str]]:
+    sb, config = get_browser()
     selectors = config["selectors"]
     base_url = config["base_url"]
     search_url = config["search_url"].format(
@@ -181,73 +193,69 @@ def fetch_indeed(
     results: list[tuple[str, str]] = []
     log.info("indeed_search", url=search_url, query=query)
 
-    sb = open_pure_cdp_browser("indeed", config)
-    try:
-        if not _open_page(
-            sb,
-            search_url,
-            "listing",
-            selectors["job_link"],
-            captcha_timeout,
-        ):
-            return results
-        human_sleep(min_delay, max_delay)
+    if not _open_page(
+        sb,
+        search_url,
+        "listing",
+        selectors["job_link"],
+        captcha_timeout,
+    ):
+        return results
+    human_sleep(min_delay, max_delay)
 
-        seen: set[str] = set()
-        urls: list[str] = []
+    seen: set[str] = set()
+    urls: list[str] = []
 
-        while len(urls) < max_jobs:
-            cards = _find_elements(sb, selectors["job_link"])
-            for card in cards:
-                href = _element_attr(card, "href")
-                if not href:
-                    continue
-                canonical = _normalize_job_url(base_url, href)
-                if canonical in seen:
-                    continue
-                seen.add(canonical)
-                urls.append(canonical)
-                if len(urls) >= max_jobs:
-                    break
-
-            log.info("listing_progress", collected=len(urls), target=max_jobs)
+    while len(urls) < max_jobs:
+        cards = _find_elements(sb, selectors["job_link"])
+        for card in cards:
+            href = _element_attr(card, "href")
+            if not href:
+                continue
+            canonical = _normalize_job_url(base_url, href)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            urls.append(canonical)
             if len(urls) >= max_jobs:
                 break
 
-            if not _has_selector(sb, selectors["pagination_next"]):
-                log.info("no_next_page")
-                break
+        log.info("listing_progress", collected=len(urls), target=max_jobs)
+        if len(urls) >= max_jobs:
+            break
 
-            sb.click(selectors["pagination_next"])
+        if not _has_selector(sb, selectors["pagination_next"]):
+            log.info("no_next_page")
+            break
+
+        sb.click(selectors["pagination_next"])
+        human_sleep(min_delay, max_delay)
+        if not _solve_captcha_if_needed(
+            sb,
+            "pagination",
+            selectors["job_link"],
+            captcha_timeout,
+        ):
+            break
+
+    log.info("listing_done", collected=len(urls))
+
+    jd_selector = selectors["jd_body"]
+    for idx, url in enumerate(urls[:max_jobs]):
+        try:
+            if not _open_page(sb, url, "detail", jd_selector, captcha_timeout):
+                break
             human_sleep(min_delay, max_delay)
-            if not _solve_captcha_if_needed(
-                sb,
-                "pagination",
-                selectors["job_link"],
-                captcha_timeout,
-            ):
-                break
 
-        log.info("listing_done", collected=len(urls))
-
-        jd_selector = selectors["jd_body"]
-        for idx, url in enumerate(urls[:max_jobs]):
-            try:
-                if not _open_page(sb, url, "detail", jd_selector, captcha_timeout):
-                    break
-                human_sleep(min_delay, max_delay)
-
-                html = _page_html(sb)
-                if not html:
-                    log.warning("empty_html", url=url)
-                    continue
-                results.append((html, url))
-                log.info("detail_fetched", idx=idx, url=url)
-            except Exception as e:  # noqa: BLE001
-                log.warning("detail_failed", url=url, error=str(e))
+            html = _page_html(sb)
+            if not html:
+                log.warning("empty_html", url=url)
                 continue
-    finally:
-        close_pure_cdp_browser(sb)
+            results.append((html, url))
+            log.info("detail_fetched", idx=idx, url=url)
+        except Exception as e:  # noqa: BLE001
+            log.warning("detail_failed", url=url, error=str(e))
+            continue
 
     return results
 

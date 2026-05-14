@@ -16,11 +16,13 @@ from dotenv import load_dotenv
 
 from job_scraper.extractor import JobExtractor, build_extractor
 from job_scraper.fetchers.base import load_site_config
+from job_scraper.fetchers.browser_context import browser_session
 from job_scraper.fetchers.naukri import fetch_naukri
 from job_scraper.normalizer import compute_job_id, normalize_posting
 from job_scraper.schema import JobPosting
 from job_scraper.storage import get_output_path, write
 from job_scraper.utils.logging import configure_logging, get_logger
+from job_scraper.utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -157,31 +159,18 @@ async def scrape_company_query(
     return written
 
 
-async def scrape_all(
-    *,
-    query: str | None,
+async def _run_scrape_loop(
+    companies: list[str],
+    queries: list[str],
     location: str,
     max_jobs: int,
-    start_company: int,
-    limit_companies: int | None,
-    limit_queries: int | None,
+    site_config: dict[str, Any],
+    extractor: JobExtractor,
+    semaphore: asyncio.Semaphore,
+    seen_ids: set[str],
+    log: Any,
 ) -> int:
-    site_config = load_site_config("naukri")
-    queries = _queries_from_args(query, limit_queries)
-
-    companies = _company_names_from_config(site_config)
-    if start_company < 1:
-        raise ValueError("--start-company must be a 1-based index")
-    companies = companies[start_company - 1 :]
-    if limit_companies is not None:
-        companies = companies[:limit_companies]
-
-    parallelism = int(site_config.get("parallel_extractions", 5))
-    extractor = build_extractor()
-    semaphore = asyncio.Semaphore(parallelism)
-    seen_ids: set[str] = set()
-    log = get_logger("naukri_per_company")
-
+    """Run the scraping loop inside an active browser_session."""
     total_written = 0
     for company in companies:
         company_written = 0
@@ -202,14 +191,59 @@ async def scrape_all(
             company=company,
             written=company_written,
         )
+    return total_written
+
+
+def scrape_all(
+    *,
+    query: str | None,
+    location: str,
+    max_jobs: int,
+    start_company: int,
+    limit_companies: int | None,
+    limit_queries: int | None,
+) -> int:
+    site_config = load_site_config("naukri")
+    queries = _queries_from_args(query, limit_queries)
+
+    companies = _company_names_from_config(site_config)
+    if start_company < 1:
+        raise ValueError("--start-company must be a 1-based index")
+    companies = companies[start_company - 1 :]
+    if limit_companies is not None:
+        companies = companies[:limit_companies]
+
+    parallelism = int(site_config.get("parallel_extractions", 5))
+    extractor = build_extractor()
+    log = get_logger("naukri_per_company")
+
+    sb = open_pure_cdp_browser("naukri", site_config)
+    try:
+        with browser_session(sb, site_config):
+            seen_ids: set[str] = set()
+            written = asyncio.run(
+                _run_scrape_loop(
+                    companies,
+                    queries,
+                    location,
+                    max_jobs,
+                    site_config,
+                    extractor,
+                    asyncio.Semaphore(parallelism),
+                    seen_ids,
+                    log,
+                )
+            )
+    finally:
+        close_pure_cdp_browser(sb)
 
     log.info(
         "per_company_scrape_done",
         companies=len(companies),
         queries=len(queries),
-        total_written=total_written,
+        total_written=written,
     )
-    return total_written
+    return written
 
 
 def main() -> None:
@@ -240,15 +274,13 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging(args.log_level)
-    asyncio.run(
-        scrape_all(
-            query=args.query,
-            location=args.location,
-            max_jobs=args.max,
-            start_company=args.start_company,
-            limit_companies=args.limit_companies,
-            limit_queries=args.limit_queries,
-        )
+    scrape_all(
+        query=args.query,
+        location=args.location,
+        max_jobs=args.max,
+        start_company=args.start_company,
+        limit_companies=args.limit_companies,
+        limit_queries=args.limit_queries,
     )
 
 
