@@ -12,53 +12,175 @@ search_url: "https://www.linkedin.com/jobs/search?keywords={query}&location={loc
 queries:
   - "Fresher jobs"
   - "software engineer"
-  - "frontend developer"
+  - "full stack developer entry level"
   - "backend developer"
-  - "full stack developer"
-  - "android developer"
-  - "data engineer"
-  - "devops engineer"
-  - "associate software engineer"
+  - "MEAN stack developer"
+  # - "android developer"
+  # - "data engineer"
+  # - "devops engineer"
+  # - "associate software engineer"
 
 # Native LinkedIn Company filter. These are LinkedIn company IDs used in f_C.
 company_ids:
-  - "1586" # Amazon
-  - "1441" # Google
-  - "1035" # Microsoft
-  - "1480" # Adobe
-  - "321062" # Flipkart
-  - "1283" # Infosys
-  - "1353" # TCS
-  - "1756" # HCLTech
-  - "164182" # Hexaware Technologies
-  - "86813252" # LTIMindtree
-  - "9215331" # Accenture in India
-  - "18144942" # Accenture Japan
-  - "1028" # Oracle
-  - "3185" # Salesforce
-  - "29352" # ServiceNow
-  - "2017" # Qualcomm
-  - "17763" # MediaTek
-  - "1009" # IBM
-  - "2553488" # BrowserStack
-  - "4972" # EPAM Systems
-  - "2010798" # Tiger Analytics
-  - "26945" # Fractal
-  - "6508" # D. E. Shaw
-  - "18846814" # Turing
-  - "1194036" # MathWorks
-  - "1482" # PayPal
-  - "1195173" # Phenom
-  - "20688" # MAQ Software
-  - "103869" # Incture
-  - "422813" # Zomato
-  - "78087354" # Physics Wallah
-  - "125048" # ZL Tech
-  - "236997" # Centre for Computational Technologies (CCTech)
-  - "2457" # Synopsys
-  - "5208967" # Tredence
-  - "3246461" # Tudip Technologies
-  - "18517989" # Vecmocon Technologies
+  # - "1586" # Amazon
+  # - "1441" # Google
+  # - "1035" # Microsoft
+  # - "1480" # Adobe
+  # - "321062" # Flipkart
+  # - "1283" # Infosys
+  # - "1353" # TCS
+  # - "1756" # HCLTech
+  # - "164182" # Hexaware Technologies
+  # - "86813252" # LTIMindtree
+  # - "9215331" # Accenture in India
+  # - "18144942" # Accenture Japan
+  # - "1028" # Oracle
+  # - "3185" # Salesforce
+  # - "29352" # ServiceNow
+  # - "2017" # Qualcomm
+  # - "17763" # MediaTek
+  # - "1009" # IBM
+  # - "2553488" # BrowserStack
+  # - "4972" # EPAM Systems
+  # - "2010798" # Tiger Analytics
+  # - "26945" # Fractal
+  # - "6508" # D. E. Shaw
+  # - "18846814" # Turing
+  # - "1194036" # MathWorks
+  # - "1482" # PayPal
+  # - "1195173" # Phenom
+  # - "20688" # MAQ Software
+  # - "103869" # Incture
+  # - "422813" # Zomato
+  # - "78087354" # Physics Wallah
+  # - "125048" # ZL Tech
+  # - "236997" # Centre for Computational Technologies (CCTech)
+  # - "2457" # Synopsys
+  # - "5208967" # Tredence
+  # - "3246461" # Tudip Technologies
+  # - "18517989" # Vecmocon Technologies
+
+  # - "235348" # Accolite
+  # - "3583" # airtel
+  # - "1497" # AMD
+  # - "9223041" # Axestrack
+  # - "4764" # BlackRock
+  # - "13201512" # BlogVault
+  # - "2622" # Caterpillar Inc.
+  # - "27135632" # Celebal Technologies
+  # - "1269" # Chubb
+  # - "1680" # Cognizant
+  # - "79039848" # Ensylon
+  # - "1060" # Ericsson
+  # - "304826" # Futures First
+  # - "71603598" # Hero Vired
+  # - "1344" # Honeywell
+  # - "2414538" # Innovaccer
+  # - "5387560" # Intellect Design Arena Ltd
+  # - "3275730" # Kickdrum
+  # - "862672" # Media.net
+  # - "3795888" # MUFG
+  # - "18386725" # Pocketpills
+  # - "2685223" # Poshmark
+  # - "34747172" # ProcDNA
+  # - "30898" # Prodapt
+  # - "20439849" # Rusk Media
+  # - "51618918" # Titan Email
+  # - "1103" # Verizon
+
+  - "11273203" # Aptiv
+  - "75741952" # Arrise Solutions (India) Pvt. Ltd.
+  # - "1508" # BNP Paribas
+  # - "13255633" # Bolt.Earth
+  # - "98572118" # BOT Consulting
+  # - "9380094" # Branch International
+  # - "10407612" # Cyware
+  # - "1038" # Deloitte
+  # - "1307" # Fidelity Investments
+  # - "3131483" # Flexport
+  # - "1123370" # Freecharge
+  # - "1241" # HSBC
+  # - "2499560" # Incedo Inc.
+  # - "2525298" # KPMG India
+  # - "26495" # Kumaran Systems
+  # - "35113" # MakeMyTrip
+  # - "1431" # PepsiCo
+  # - "1092713" # PwC India
+  # - "3545" # Red Hat
+  # - "511568" # rtCamp
+  # - "33322545" # Sibros
+  # - "10347848" # Signzy
+  # - "1691" # Societe Generale
+  # - "399351" # Sprinklr
+  # - "19857" # Wayfair
+  # - "1235" # Wells Fargo
+  # - "3789" # John Deere
+
+  # # Broad/ambiguous matches; verify relevance after scraping.
+  # - "8717594" # Guardian Jobs
+  # - "16262625" # Honda Cars of Aiken
+  # - "88189698" # Triumph Motorcycles of Harrisonburg
+
+  # - "106440986" # Atom Cyber Security Inc.
+  # - "213642" # Eagleview
+  # - "31207209" # Bajaj Finserv Health
+  # - "163379" # DBS Bank
+  # - "66873611" # EVIGWAY TECHNOLOGIES PVT. LTD.
+  # - "68137115" # OneBanc
+  # - "10385335" # ProcMart
+  # - "2448230" # Unicommerce
+  # - "440130" # E2E Cloud
+  # - "10002306" # Treebo Hospitality Ventures
+  # - "13178640" # Addverb
+  # - "13270395" # Ador Powertron Limited
+  # - "139191" # Ador Powertron Limited
+  # - "1823638" # Aperam
+  # - "162750" # BNY
+  # - "1866670" # Couchbase
+  # - "80733748" # EATCLUB Brands
+  # - "69498322" # Eucloid Data Solutions
+  # - "102062018" # Evam Labs
+  # - "1073" # EY
+  # - "3802766" # Fortune Minds Inc.
+  # - "67934646" # GoDaddy
+  # - "7846" # GoDaddy
+  # - "21175" # IDFC FIRST Bank
+  # - "5944" # Info Edge India Ltd
+  # - "456929" # InfoObjects Inc.
+  # - "10184" # ION
+  # - "2922474" # Josh Technology Group
+  # - "89882109" # mamaearth
+  # - "11530525" # mavQ
+
+  # - "1259668" # MTX Group
+  # - "11902" # Nagarro
+  # - "3543005" # NAV Fund Services
+  # - "25985" # OTSI - Object Technology Solutions Inc.
+  # - "3716484" # OYO
+  # - "31193090" # Park+
+  # - "31230738" # Axxela
+  # - "20405" # Bain & Company
+  # - "2114" # Bain & Company
+  # - "102439830" # Curiflow
+  # - "105156642" # Kaabil
+  # - "10019386" # Provakil
+  # - "1800816" # RGF International Recruitment
+  # - "33725337" # Samsung India Electronics Limited, Noida
+  # - "33926293" # Samsung R&D Institute India - Bangalore
+  # - "9659" # Sapiens
+  # - "1468" # SLB
+  # - "111553067" # Serent
+  # - "6176" # 7-Eleven
+  # - "28145023" # SHL
+  # - "99820844" # Shodh AI
+  # - "6401276" # Spring Financial
+  # - "41315" # Tekion Corp
+  # - "3607" # Trilogy
+  # - "2865" # Visteon Corporation
+  # - "2058906" # Whatfix
+  # - "5240" # ZS
+  # - "71305490" # Manthan Software Service Private Limited
+  # - "99521236" # TruEstate
 
 # TODO: Resolve and add primary LinkedIn company ID for RoshAi.
 
@@ -86,7 +208,7 @@ parallel_extractions: 5 # max concurrent LLM extraction tasks per query
 min_delay_seconds: 4
 max_delay_seconds: 10
 pages_per_session: 5
-headless: true # toggle to false if blocks intensify
+headless: false # toggle to false if blocks intensify
 block_resources: ["image", "font", "media"]
 proxy_url: null # override with env LINKEDIN_PROXY_URL
 

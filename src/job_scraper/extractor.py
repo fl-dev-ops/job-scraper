@@ -106,7 +106,7 @@ class JobExtractor:
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         self.model = model or os.getenv(
-            "OPENROUTER_MODEL", "anthropic/claude-haiku-4.5"
+            "OPENROUTER_MODEL", "deepseek/deepseek-v4-flash"
         )
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:

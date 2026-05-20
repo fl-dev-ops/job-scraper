@@ -83,11 +83,12 @@ def wait_for_selector(sb: Any, selector: str, timeout: int = 20) -> None:
 def apply_mycdp_patches() -> None:
     """Tolerate newer Chrome resource types that older mycdp doesn't know."""
     try:
-        from mycdp import network
+        from mycdp import network, util
     except ImportError:
         return
 
     if getattr(network.ResourceType, "_job_scraper_patched", False):
+        _patch_unknown_cdp_events(util)
         return
 
     def _safe_from_json(cls: type[Any], value: str) -> Any:
@@ -98,6 +99,25 @@ def apply_mycdp_patches() -> None:
 
     network.ResourceType.from_json = classmethod(_safe_from_json)  # type: ignore[assignment,method-assign]
     network.ResourceType._job_scraper_patched = True  # type: ignore[attr-defined]
+    _patch_unknown_cdp_events(util)
+
+
+def _patch_unknown_cdp_events(util: Any) -> None:
+    if getattr(util, "_job_scraper_patched", False):
+        return
+
+    original_parse_json_event = util.parse_json_event
+
+    def _safe_parse_json_event(json_event: dict[str, Any]) -> Any:
+        try:
+            return original_parse_json_event(json_event)
+        except KeyError:
+            if "method" in json_event:
+                return None
+            raise
+
+    util.parse_json_event = _safe_parse_json_event
+    util._job_scraper_patched = True
 
 
 def _connection_loop(connection: Any) -> asyncio.AbstractEventLoop | None:

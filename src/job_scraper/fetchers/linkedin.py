@@ -78,18 +78,23 @@ def _build_search_url(
     company_ids_override: Sequence[str] | None = None,
 ) -> str:
     search_template = str(config["search_url"])
+    location = location.strip()
     search_url = search_template.format(
         query=quote_plus(query),
-        location=quote_plus(location or "India"),
+        location=quote_plus(location),
     )
-    company_ids = _load_company_ids(config, company_ids_override)
-    if not company_ids:
-        return search_url
-
     parsed = urlsplit(search_url)
-    params = [(key, value) for key, value in parse_qsl(parsed.query) if key != "f_C"]
-    params.append(("f_C", ",".join(company_ids)))
-    filtered_url = urlunsplit(
+    params = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key != "f_C" and not (key == "location" and not location)
+    ]
+
+    company_ids = _load_company_ids(config, company_ids_override)
+    if company_ids:
+        params.append(("f_C", ",".join(company_ids)))
+
+    return urlunsplit(
         (
             parsed.scheme,
             parsed.netloc,
@@ -98,7 +103,6 @@ def _build_search_url(
             parsed.fragment,
         )
     )
-    return filtered_url
 
 
 def _build_paginated_search_url(search_url: str, page_index: int, page_size: int) -> str:

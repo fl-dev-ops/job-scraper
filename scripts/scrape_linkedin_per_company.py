@@ -1,6 +1,7 @@
 """Scrape LinkedIn jobs one company ID at a time.
 
 Usage:
+    uv run python scripts/scrape_linkedin_per_company.py --max 5
     uv run python scripts/scrape_linkedin_per_company.py --location India --max 5
     uv run python scripts/scrape_linkedin_per_company.py --limit-companies 1
 """
@@ -151,7 +152,7 @@ async def scrape_company_query(
             company_ids_override=[company.company_id],
             scrolls_per_listing_page_override=scrolls_per_page,
         )
-    except BaseException as exc:  # noqa: BLE001 - continue the long run after one failure
+    except Exception as exc:  # noqa: BLE001 - continue the long run after one query failure
         log.error(
             "fetcher_crashed",
             company=company.name,
@@ -308,7 +309,7 @@ def scrape_all(
 def main() -> None:
     load_dotenv(PROJECT_ROOT / ".env")
     parser = argparse.ArgumentParser(description="Scrape LinkedIn jobs per configured company ID.")
-    parser.add_argument("--location", default="India")
+    parser.add_argument("--location", default="")
     parser.add_argument("--max", type=int, default=5, help="Max jobs per query per company")
     parser.add_argument(
         "--scrolls-per-page",
