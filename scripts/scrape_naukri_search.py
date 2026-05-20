@@ -11,10 +11,12 @@ import argparse
 import asyncio
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 from job_scraper.extractor import JobExtractor, build_extractor
+from job_scraper.fetchers import naukri as naukri_fetcher
 from job_scraper.fetchers.base import load_site_config
 from job_scraper.fetchers.browser_context import browser_session
 from job_scraper.fetchers.naukri import fetch_naukri
@@ -25,6 +27,85 @@ from job_scraper.utils.logging import configure_logging, get_logger
 from job_scraper.utils.seleniumbase_compat import close_pure_cdp_browser, open_pure_cdp_browser
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+def _classify_listing_html(html: str) -> str:
+    if not html.strip():
+        return "empty_html"
+
+    lowered = html.lower()
+    block_markers = (
+        "captcha",
+        "robot",
+        "access denied",
+        "unusual traffic",
+        "verify you are human",
+        "security check"
+    )
+    if any(marker in lowered for marker in block_markers):
+        return "blocked_or_challenge"
+    if "__next" in lowered or "jobtuple" in lowered or "naukri" in lowered:
+        return "normal_html"
+    return "unknown_html"
+
+def _fetch_naukri_with_listing_diagnostics(
+    *,
+    company_name: str,
+    query: str,
+    location: str,
+    max_jobs: int,
+    site_config: dict[str, Any],
+    log: Any,
+) -> list[tuple[str, str]]:
+    search_template = str(site_config.get("search_url") or load_site_config("naukri")["search_url"])
+    search_url = naukri_fetcher._build_search_url(
+        search_template,
+        query,
+        location,
+        company_name,
+    )
+    log.info(
+        "listing_search_start",
+        company=company_name,
+        query=query,
+        search_url=search_url,
+    )
+
+    original_collect = naukri_fetcher._collect_listing_urls_from_html
+    page_number = 0
+    collected = 0
+
+    def collect_with_diagnostics(
+        html: str,
+        selectors: dict[str, str],
+        base_url: str,
+        seen: set[str],
+        max_jobs: int,
+    ) -> list[str]:
+        nonlocal page_number, collected
+        page_number += 1
+        urls = original_collect(html, selectors, base_url, seen, max_jobs)
+        collected += len(urls)
+        log.info(
+            "listing_page_diagnostic",
+            page=page_number,
+            listed=len(urls),
+            collected=collected,
+            html_chars=len(html),
+            html_classification=_classify_listing_html(html),
+            search_host=urlparse(search_url).netloc,
+        )
+        return urls
+
+    naukri_fetcher._collect_listing_urls_from_html = collect_with_diagnostics
+    try:
+        return fetch_naukri(
+            query,
+            location,
+            max_jobs,
+            company_name=company_name,
+        )
+    finally:
+        naukri_fetcher._collect_listing_urls_from_html = original_collect
 
 
 def _company_names_from_config(site_config: dict[str, Any]) -> list[str]:
@@ -59,6 +140,7 @@ async def extract_and_write(
 ) -> JobPosting | None:
     selectors = site_config["selectors"]
     async with semaphore:
+        log.info("detail_extract_start", url=url)
         posting = await extractor.extract_async(
             html,
             url,
@@ -105,11 +187,13 @@ async def scrape_company_query(
 
     try:
         pages = await asyncio.to_thread(
-            fetch_naukri,
-            query,
-            location,
-            max_jobs,
+            _fetch_naukri_with_listing_diagnostics,
             company_name=company_name,
+            query=query,
+            location=location,
+            max_jobs=max_jobs,
+            site_config=site_config,
+            log=log,
         )
     except BaseException as exc:  # noqa: BLE001 - continue the long run after one failure
         log.error(
@@ -121,6 +205,7 @@ async def scrape_company_query(
         return 0
 
     pages_to_extract: list[tuple[str, str]] = []
+    log.info("detail_pages_fetched", company=company_name, query=query, count=len(pages))
     for html, url in pages:
         job_id = compute_job_id(url)
         if job_id in seen_ids:
@@ -130,6 +215,7 @@ async def scrape_company_query(
             seen_ids.add(job_id)
             log.info("skipped_existing_before_extract", job_id=job_id, source=url)
             continue
+        log.info("detail_extract_queued", job_id=job_id, source=url)
         pages_to_extract.append((html, url))
 
     tasks = [
