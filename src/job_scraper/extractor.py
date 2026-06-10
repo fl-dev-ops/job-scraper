@@ -2,7 +2,7 @@
 
 Uses Crawl4AI's LLMExtractionStrategy with the `raw://` URL prefix to extract
 structured fields from JD plain text. LiteLLM under the hood routes the
-provider string to OpenRouter.
+provider string to the configured LLM provider.
 
 Pipeline:
     raw HTML  -> extract_jd_text() -> plain text
@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +25,7 @@ from crawl4ai import (
 from pydantic import ValidationError
 
 from .fetchers.base import extract_html_field, extract_jd_text
+from .llm import build_llm_config
 from .schema import JobPosting, LLMExtractedFields, SiteName
 from .utils.logging import get_logger
 
@@ -105,18 +105,12 @@ class JobExtractor:
     """Singleton extractor reused across all sites."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
-        self.model = model or os.getenv(
-            "OPENROUTER_MODEL", "deepseek/deepseek-v4-flash"
-        )
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise RuntimeError(
-                "OPENROUTER_API_KEY missing. Set it in .env before running."
-            )
+        self._resolved_llm = build_llm_config(model=model, api_key=api_key)
 
         self._llm_config = LLMConfig(
-            provider=f"openrouter/{self.model}",
-            api_token=self.api_key,
+            provider=self._resolved_llm.provider,
+            api_token=self._resolved_llm.api_token,
+            base_url=self._resolved_llm.base_url,
         )
         self._strategy = LLMExtractionStrategy(
             llm_config=self._llm_config,

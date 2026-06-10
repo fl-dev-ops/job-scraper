@@ -25,6 +25,8 @@ import yaml
 from dotenv import load_dotenv
 from tqdm import tqdm
 
+from job_scraper.llm import ResolvedLLMConfig, build_llm_config
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "jobs" / "linkedin"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "exports" / "linkedin_jobs.xlsx"
@@ -33,17 +35,25 @@ DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
 HEADERS = [
     "Job title",
     "Company name",
+    "Role category",
     "Role type",
     "Location",
+    "Work mode",
     "Role summary",
     "Key responsibilities",
     "Required skills",
-    "Focus rounds",
-    "Focus round pattern",
+    "Other skills / notes",
+    "Education requirement",
+    "Screening",
+    "Behavioural",
+    "Technical",
+    "Culture fit",
     "salary_inr_per_year_min",
     "salary_inr_per_year_max",
     "experience_min_years",
     "experience_max_years",
+    "Source URL",
+    "Full job description",
 ]
 
 
@@ -51,17 +61,25 @@ HEADERS = [
 class JobRecord:
     title: str
     company: str
+    role_category: str
     role_type: str
     location: str
+    work_mode: str
     role_summary: str
     key_responsibilities: str
     required_skills: str
-    focus_rounds: str
-    focus_round_pattern: str
+    other_skills_notes: str
+    education_requirement: str
+    round_screening: str
+    round_behavioural: str
+    round_technical: str
+    round_culture_fit: str
     salary_min: int | None
     salary_max: int | None
     experience_min: int | None
     experience_max: int | None
+    source_url: str
+    full_jd: str
 
 
 def _clean_text(text: str) -> str:
@@ -69,6 +87,26 @@ def _clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _join_list(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    return ", ".join(str(item) for item in value if str(item).strip())
+
+
+def _limit_round_topics(value: str, *, max_topics: int = 4, max_words: int = 3) -> str:
+    """Cap a round's topics to at most `max_topics`, each at most `max_words` words."""
+    topics: list[str] = []
+    for raw in value.split(";"):
+        topic = raw.strip()
+        if not topic:
+            continue
+        topic = " ".join(topic.split()[:max_words])
+        topics.append(topic)
+        if len(topics) == max_topics:
+            break
+    return "; ".join(topics)
 
 
 def _split_frontmatter(markdown: str, path: Path) -> tuple[dict[str, Any], str]:
@@ -105,9 +143,6 @@ def _fallback_summary(frontmatter: dict[str, Any], jd_text: str) -> dict[str, st
     title = str(frontmatter.get("title") or "Unknown role")
     company = str(frontmatter.get("company") or "Unknown company")
     location = str(frontmatter.get("location") or "Unknown location")
-    skills = frontmatter.get("key_technical_skills") or []
-    if not isinstance(skills, list):
-        skills = []
 
     sentences = re.split(r"(?<=[.!?])\s+", jd_text)
     role_summary = " ".join(sentences[:2]).strip()
@@ -123,11 +158,10 @@ def _fallback_summary(frontmatter: dict[str, Any], jd_text: str) -> dict[str, st
     return {
         "role_summary": role_summary[:600],
         "key_responsibilities": "; ".join(responsibility_lines)[:900],
-        "required_skills": ", ".join(str(skill) for skill in skills)[:900],
-        "focus_rounds": (
-            "Opening - initial screening; Technical - role-specific fundamentals; "
-            "Behavioral/SJT - communication and problem solving; Final - culture fit"
-        ),
+        "round_screening": "Background; Role fit; Motivation; Availability",
+        "round_behavioural": "Teamwork; Communication; Conflict handling; Past projects",
+        "round_technical": "Core fundamentals; Coding; Key technologies; System design",
+        "round_culture_fit": "Values alignment; Long-term goals; Ways of working; Team fit",
     }
 
 
@@ -170,58 +204,10 @@ def _infer_role_type(frontmatter: dict[str, Any]) -> str:
     return role_map.get(role, role or "")
 
 
-def _focus_stage(round_text: str) -> str:
-    text = round_text.lower()
-    if "opening" in text or "screen" in text or "recruit" in text or "hr" in text:
-        return "Opening/Screening"
-    if "behavior" in text or "sjt" in text or "communication" in text or "teamwork" in text:
-        return "Behavioral/SJT"
-    if "system design" in text or "architecture" in text or "scalab" in text:
-        return "System Design/Architecture"
-    if (
-        "technical" in text
-        or "coding" in text
-        or "java" in text
-        or "python" in text
-        or "react" in text
-        or "android" in text
-        or "data" in text
-        or "cloud" in text
-        or "devops" in text
-        or "sql" in text
-        or "api" in text
-    ):
-        return "Technical/Role Skills"
-    if "final" in text or "culture" in text:
-        return "Final/Culture Fit"
-    if (
-        "domain" in text
-        or "procurement" in text
-        or "business" in text
-        or "customer" in text
-        or "product" in text
-    ):
-        return "Domain/Business"
-    return "Other"
-
-
-def _focus_round_pattern(focus_rounds: str) -> str:
-    stages: list[str] = []
-    for round_text in focus_rounds.split(";"):
-        round_text = round_text.strip()
-        if not round_text:
-            continue
-        stage = _focus_stage(round_text)
-        if stage not in stages:
-            stages.append(stage)
-    return " + ".join(stages)
-
-
 def _summarize_with_llm(
     frontmatter: dict[str, Any],
     jd_text: str,
-    model: str,
-    api_key: str,
+    llm_config: ResolvedLLMConfig,
 ) -> dict[str, str]:
     from litellm import completion
 
@@ -229,17 +215,26 @@ def _summarize_with_llm(
     company = frontmatter.get("company")
     prompt = f"""Extract concise spreadsheet fields from this job description.
 
+This candidate will go through a FIXED 4-round interview process for every job:
+1. Screening   - recruiter/initial screen: background, role fit, motivation, eligibility.
+2. Behavioural - teamwork, communication, conflict handling, past-project STAR scenarios.
+3. Technical   - the actual coding/fundamentals/technologies/system-design for THIS role.
+4. Culture fit - company values, long-term goals, ways of working, team fit.
+
 Return one JSON object with these exact string keys:
 - role_summary: 1-2 sentences, no bullets.
 - key_responsibilities: 3-6 concise bullet-like phrases separated by semicolons.
-- required_skills: concise comma-separated technical and core required skills.
-- focus_rounds: likely interview focus plan, maximum 4-5 rounds, separated by semicolons.
+- round_screening: topics for the Screening round, separated by semicolons.
+- round_behavioural: topics for the Behavioural round, separated by semicolons.
+- round_technical: topics for the Technical round, separated by semicolons.
+- round_culture_fit: topics for the Culture fit round, separated by semicolons.
 
-For focus_rounds, infer from the role title, role family, responsibilities, and required skills in the job description.
-Keep it role-specific, for example:
-"Opening - initial screening; Behavioral/SJT - communication and problem solving; Technical - frontend/backend/full-stack coding and system basics; Final - culture fit"
-Do not mention more than 5 rounds.
-For all other fields, use only the job description. Do not infer missing facts.
+For the four round_* fields: give AT MOST 4 topics each, and each topic must be AT MOST
+3 words (terse keywords, not sentences). Make the topics SPECIFIC to this job by inferring
+from the role title, role family, responsibilities, and required skills. The Technical
+round especially should name the concrete technologies, frameworks, and problem areas from
+the job description. For role_summary and key_responsibilities, use only the job
+description; do not infer missing facts.
 
 Title: {title}
 Company: {company}
@@ -248,22 +243,23 @@ Job description:
 {jd_text[:12000]}
 """
     response = completion(
-        model=f"openrouter/{model}",
-        api_key=api_key,
+        **llm_config.litellm_kwargs(),
         messages=[
             {"role": "system", "content": "Return valid JSON only. No markdown fences."},
             {"role": "user", "content": prompt},
         ],
         temperature=0,
-        max_tokens=700,
+        max_tokens=900,
     )
     content = response.choices[0].message.content or "{}"
     parsed = _load_json_object(content)
     return {
         "role_summary": str(parsed.get("role_summary") or "").strip(),
         "key_responsibilities": str(parsed.get("key_responsibilities") or "").strip(),
-        "required_skills": str(parsed.get("required_skills") or "").strip(),
-        "focus_rounds": str(parsed.get("focus_rounds") or "").strip(),
+        "round_screening": _limit_round_topics(str(parsed.get("round_screening") or "")),
+        "round_behavioural": _limit_round_topics(str(parsed.get("round_behavioural") or "")),
+        "round_technical": _limit_round_topics(str(parsed.get("round_technical") or "")),
+        "round_culture_fit": _limit_round_topics(str(parsed.get("round_culture_fit") or "")),
     }
 
 
@@ -290,15 +286,14 @@ def _build_record(
     path: Path,
     *,
     use_llm: bool,
-    model: str,
-    api_key: str | None,
+    llm_config: ResolvedLLMConfig | None,
 ) -> JobRecord:
     frontmatter, jd_text = _parse_markdown(path)
     summary = _fallback_summary(frontmatter, jd_text)
 
-    if use_llm and api_key and jd_text:
+    if use_llm and llm_config and jd_text:
         try:
-            llm_summary = _summarize_with_llm(frontmatter, jd_text, model, api_key)
+            llm_summary = _summarize_with_llm(frontmatter, jd_text, llm_config)
             summary.update({key: value for key, value in llm_summary.items() if value})
         except Exception as exc:  # noqa: BLE001 - keep export usable if one summary fails
             print(f"warning: LLM summary failed for {path.name}: {exc}")
@@ -306,17 +301,25 @@ def _build_record(
     return JobRecord(
         title=str(frontmatter.get("title") or ""),
         company=str(frontmatter.get("company") or ""),
+        role_category=str(frontmatter.get("role") or ""),
         role_type=_infer_role_type(frontmatter),
         location=str(frontmatter.get("location") or ""),
+        work_mode=str(frontmatter.get("work_mode") or ""),
         role_summary=summary["role_summary"],
         key_responsibilities=summary["key_responsibilities"],
-        required_skills=summary["required_skills"],
-        focus_rounds=summary["focus_rounds"],
-        focus_round_pattern=_focus_round_pattern(summary["focus_rounds"]),
+        required_skills=_join_list(frontmatter.get("key_technical_skills")),
+        other_skills_notes=_join_list(frontmatter.get("other_skills_notes")),
+        education_requirement=str(frontmatter.get("education_requirement") or ""),
+        round_screening=summary["round_screening"],
+        round_behavioural=summary["round_behavioural"],
+        round_technical=summary["round_technical"],
+        round_culture_fit=summary["round_culture_fit"],
         salary_min=frontmatter.get("salary_inr_per_year_min"),
         salary_max=frontmatter.get("salary_inr_per_year_max"),
         experience_min=frontmatter.get("experience_min_years"),
         experience_max=frontmatter.get("experience_max_years"),
+        source_url=str(frontmatter.get("source") or ""),
+        full_jd=jd_text,
     )
 
 
@@ -342,7 +345,7 @@ def _cell_xml(value: object, row_idx: int, col_idx: int, style: int = 0) -> str:
 
 
 def _sheet_xml(rows: list[list[object]]) -> str:
-    widths = [24, 22, 24, 24, 58, 70, 52, 72, 42, 18, 18, 18, 18]
+    widths = [24, 22, 16, 24, 24, 12, 58, 70, 52, 52, 28, 50, 50, 60, 50, 18, 18, 18, 18, 46, 100]
     cols = "".join(
         f'<col min="{idx}" max="{idx}" width="{width}" customWidth="1"/>'
         for idx, width in enumerate(widths, start=1)
@@ -370,23 +373,31 @@ def _sheet_xml(rows: list[list[object]]) -> str:
 </worksheet>"""
 
 
-def _write_xlsx(records: list[JobRecord], output_path: Path) -> None:
+def _write_xlsx(records: list[JobRecord], output_path: Path, sheet_name: str = "Jobs") -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     data_rows = [
         [
             record.title,
             record.company,
+            record.role_category,
             record.role_type,
             record.location,
+            record.work_mode,
             record.role_summary,
             record.key_responsibilities,
             record.required_skills,
-            record.focus_rounds,
-            record.focus_round_pattern,
+            record.other_skills_notes,
+            record.education_requirement,
+            record.round_screening,
+            record.round_behavioural,
+            record.round_technical,
+            record.round_culture_fit,
             record.salary_min,
             record.salary_max,
             record.experience_min,
             record.experience_max,
+            record.source_url,
+            record.full_jd,
         ]
         for record in records
     ]
@@ -410,10 +421,10 @@ def _write_xlsx(records: list[JobRecord], output_path: Path) -> None:
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
 </Relationships>""",
-        "xl/workbook.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        "xl/workbook.xml": f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="LinkedIn Jobs" sheetId="1" r:id="rId1"/></sheets>
+  <sheets><sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/></sheets>
 </workbook>""",
         "xl/_rels/workbook.xml.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -467,9 +478,12 @@ def _write_xlsx(records: list[JobRecord], output_path: Path) -> None:
 
 
 def export_jobs(input_dir: Path, output_path: Path, *, use_llm: bool, model: str, limit: int | None) -> int:
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if use_llm and not api_key:
-        print("warning: OPENROUTER_API_KEY is not set; using deterministic summary fallback")
+    llm_config = None
+    if use_llm:
+        try:
+            llm_config = build_llm_config(model=model)
+        except RuntimeError as exc:
+            print(f"warning: {exc} Using deterministic summary fallback")
 
     paths = sorted(input_dir.glob("*.md"))
     if limit is not None:
@@ -478,10 +492,10 @@ def export_jobs(input_dir: Path, output_path: Path, *, use_llm: bool, model: str
         raise FileNotFoundError(f"No Markdown job files found in {input_dir}")
 
     records = [
-        _build_record(path, use_llm=use_llm, model=model, api_key=api_key)
+        _build_record(path, use_llm=use_llm, llm_config=llm_config)
         for path in tqdm(paths, desc="Exporting jobs", unit="job")
     ]
-    _write_xlsx(records, output_path)
+    _write_xlsx(records, output_path, sheet_name=f"{input_dir.name.capitalize()} Jobs")
     return len(records)
 
 
@@ -490,9 +504,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Export scraped job Markdown files to Excel.")
     parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--model", default=os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL))
+    parser.add_argument(
+        "--model",
+        default=os.getenv("LLM_MODEL") or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL),
+    )
     parser.add_argument("--limit", type=int, default=None, help="Export only the first N markdown files")
-    parser.add_argument("--no-llm", action="store_true", help="Skip OpenRouter summaries")
+    parser.add_argument("--no-llm", action="store_true", help="Skip LLM summaries")
     args = parser.parse_args()
 
     count = export_jobs(

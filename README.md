@@ -1,6 +1,6 @@
 # job-scraper
 
-Scrapes CS graduate / early-career job postings (0–2 years experience) from **Naukri, Indeed, and LinkedIn**. Extracts structured fields via LLM (OpenRouter) and stores each posting as a Markdown file with full verbatim JD.
+Scrapes CS graduate / early-career job postings (0–2 years experience) from **Naukri, Indeed, and LinkedIn**. Extracts structured fields via LLM (OpenRouter or local Ollama) and stores each posting as a Markdown file with full verbatim JD.
 
 ## Stack
 
@@ -8,7 +8,7 @@ Scrapes CS graduate / early-career job postings (0–2 years experience) from **
 |---|---|
 | Browser + anti-detection | SeleniumBase Pure CDP + Chrome for Testing |
 | Fast DOM extraction | selectolax |
-| LLM field extraction | Crawl4AI → LiteLLM → OpenRouter |
+| LLM field extraction | Crawl4AI → LiteLLM → OpenRouter/Ollama |
 | Schema validation | Pydantic v2 |
 | CLI | Typer |
 
@@ -29,7 +29,29 @@ uv run playwright install chromium
 
 # Copy and fill environment variables
 cp .env.example .env
-# Edit .env: set OPENROUTER_API_KEY at minimum
+# Edit .env: set OPENROUTER_API_KEY for OpenRouter, or switch to Ollama
+```
+
+### Local Ollama
+
+```bash
+ollama pull llama3.1:8b
+```
+
+Then set:
+
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1:8b
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+OpenRouter remains the default:
+
+```env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...
+LLM_MODEL=anthropic/claude-haiku-4.5
 ```
 
 ## Usage

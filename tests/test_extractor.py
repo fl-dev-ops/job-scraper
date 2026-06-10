@@ -1,7 +1,7 @@
 """Offline extractor tests.
 
 Uses saved HTML fixtures (tests/fixtures/*.html) so no network calls are made.
-These tests validate the full LLM → Pydantic pipeline including OpenRouter wiring.
+These tests validate the full LLM → Pydantic pipeline including provider wiring.
 
 To add a new fixture:
     1. Scrape a real JD page and save the HTML to tests/fixtures/{site}_sample.html
@@ -21,7 +21,7 @@ FIXTURES_DIR = None  # TODO: Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def extractor():
-    # TODO: return JobExtractor(model="openrouter/...", api_key="...") using test env vars
+    # TODO: return JobExtractor(model="...") using test env vars
     pytest.skip("extractor not yet implemented")
 
 

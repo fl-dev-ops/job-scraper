@@ -32,39 +32,55 @@ from psycopg import sql
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEL_PATH = PROJECT_ROOT / "data" / "exports" / "naukri_jobs.xlsx"
-DEFAULT_TABLE_NAME = "job_postings"
+DEFAULT_TABLE_NAME = "job_postings_detailed"
 VALID_SITES = {"naukri", "linkedin", "indeed"}
 
 EXPECTED_HEADERS = [
     "Job title",
     "Company name",
+    "Role category",
     "Role type",
     "Location",
+    "Work mode",
     "Role summary",
     "Key responsibilities",
     "Required skills",
-    "Focus rounds",
-    "Focus round pattern",
+    "Other skills / notes",
+    "Education requirement",
+    "Screening",
+    "Behavioural",
+    "Technical",
+    "Culture fit",
     "salary_inr_per_year_min",
     "salary_inr_per_year_max",
     "experience_min_years",
     "experience_max_years",
+    "Source URL",
+    "Full job description",
 ]
 
 COLUMN_MAP = {
     "Job title": "job_title",
     "Company name": "company_name",
+    "Role category": "role_category",
     "Role type": "role_type",
     "Location": "location",
+    "Work mode": "work_mode",
     "Role summary": "role_summary",
     "Key responsibilities": "key_responsibilities",
     "Required skills": "required_skills",
-    "Focus rounds": "focus_rounds",
-    "Focus round pattern": "focus_round_pattern",
+    "Other skills / notes": "other_skills_notes",
+    "Education requirement": "education_requirement",
+    "Screening": "round_screening",
+    "Behavioural": "round_behavioural",
+    "Technical": "round_technical",
+    "Culture fit": "round_culture_fit",
     "salary_inr_per_year_min": "salary_inr_per_year_min",
     "salary_inr_per_year_max": "salary_inr_per_year_max",
     "experience_min_years": "experience_min_years",
     "experience_max_years": "experience_max_years",
+    "Source URL": "source_url",
+    "Full job description": "full_job_description",
 }
 
 INTEGER_FIELDS = {
@@ -154,17 +170,25 @@ def create_table(conn: psycopg.Connection[Any], table_name: str) -> None:
                 site TEXT NOT NULL CHECK (site IN ('naukri', 'linkedin', 'indeed')),
                 job_title TEXT NOT NULL,
                 company_name TEXT,
+                role_category TEXT,
                 role_type TEXT,
                 location TEXT,
+                work_mode TEXT,
                 role_summary TEXT,
                 key_responsibilities TEXT,
                 required_skills TEXT,
-                focus_rounds TEXT,
-                focus_round_pattern TEXT,
+                other_skills_notes TEXT,
+                education_requirement TEXT,
+                round_screening TEXT,
+                round_behavioural TEXT,
+                round_technical TEXT,
+                round_culture_fit TEXT,
                 salary_inr_per_year_min INTEGER CHECK (salary_inr_per_year_min IS NULL OR salary_inr_per_year_min >= 0),
                 salary_inr_per_year_max INTEGER CHECK (salary_inr_per_year_max IS NULL OR salary_inr_per_year_max >= 0),
                 experience_min_years INTEGER CHECK (experience_min_years IS NULL OR experience_min_years >= 0),
                 experience_max_years INTEGER CHECK (experience_max_years IS NULL OR experience_max_years >= 0),
+                source_url TEXT,
+                full_job_description TEXT,
                 row_hash TEXT NOT NULL UNIQUE,
                 loaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
