@@ -31,6 +31,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "jobs" / "linkedin"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "exports" / "linkedin_jobs.xlsx"
 DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+ROUNDS_DIR = PROJECT_ROOT / "data" / "rounds"
+
+_ROUND_SECTION_MAP = {
+    "SCREENING": "round_screening",
+    "BEHAVIORAL": "round_behavioural",
+    "TECHNICAL": "round_technical",
+    "CULTURE FIT": "round_culture_fit",
+}
 
 HEADERS = [
     "Job title",
@@ -124,6 +132,17 @@ def _split_frontmatter(markdown: str, path: Path) -> tuple[dict[str, Any], str]:
     return parsed, body
 
 
+_JD_PREFIX = re.compile(r"^(job\s+description|description|about\s+the\s+(role|job|position))\s*:?\s*", re.I)
+
+
+def _strip_jd_prefix(text: str) -> str:
+    """Remove Naukri-style 'Job description' boilerplate from the start of JD text."""
+    lines = text.splitlines()
+    while lines and _JD_PREFIX.match(lines[0].strip()):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
 def _extract_full_jd(body: str) -> str:
     marker = "## Full Job Description"
     if marker not in body:
@@ -131,7 +150,7 @@ def _extract_full_jd(body: str) -> str:
 
     jd = body.split(marker, 1)[1]
     jd = re.sub(r"\[View original posting\]\([^)]+\)\s*$", "", jd.strip())
-    return _clean_text(jd)
+    return _clean_text(_strip_jd_prefix(jd))
 
 
 def _parse_markdown(path: Path) -> tuple[dict[str, Any], str]:
@@ -282,6 +301,71 @@ def _load_json_object(content: str) -> dict[str, Any]:
     return parsed
 
 
+_ROUND_NAME_MAP = {
+    "SCREENING": "round_screening",
+    "BEHAVIORAL": "round_behavioural",
+    "TECHNICAL": "round_technical",
+    "CULTURE FIT": "round_culture_fit",
+}
+
+
+def _read_round_topics(job_id: str) -> dict[str, str]:
+    """Parse pre-generated round topics from data/rounds/{job_id}.md.
+
+    Handles three LLM output formats:
+      Format A: per-section headers (## SCREENING) with 2-col table (Topic | JD Signal)
+      Format B: per-section headers (## SCREENING) with 3-col table (Round | Topic | JD Signal)
+      Format C: flat combined table under ## Round-wise Topics with bold round name in col 0
+    """
+    path = ROUNDS_DIR / f"{job_id}.md"
+    if not path.exists():
+        return {}
+    content = path.read_text(encoding="utf-8")
+    result: dict[str, str] = {}
+
+    # Formats A & B: per-section headers
+    for section, field in _ROUND_SECTION_MAP.items():
+        pattern = (
+            rf"## {re.escape(section)}[^\n]*\n+"  # section name + optional suffix (e.g. " ROUND")
+            r"(\|[^\n]+\n)"
+            r"\|[-| ]+\n"
+            r"((?:\|[^\n]+\n)*)"
+        )
+        match = re.search(pattern, content)
+        if not match:
+            continue
+        header_cols = [c.strip().lower() for c in match.group(1).split("|") if c.strip()]
+        topic_idx = 1 if header_cols and header_cols[0] == "round" else 0
+        topics: list[str] = []
+        for row in match.group(2).strip().splitlines():
+            cols = [c.strip() for c in row.split("|") if c.strip()]
+            if len(cols) > topic_idx:
+                topics.append(cols[topic_idx])
+        if topics:
+            result[field] = "; ".join(topics)
+
+    if result:
+        return result
+
+    # Format C: flat combined table — round name (possibly bold) repeated in col 0
+    topics_by_round: dict[str, list[str]] = {}
+    for table_match in re.finditer(r"\|[^\n]+\n\|[-| ]+\n((?:\|[^\n]+\n)*)", content):
+        for row in table_match.group(1).strip().splitlines():
+            cols = [c.strip() for c in row.split("|") if c.strip()]
+            if len(cols) < 2:
+                continue
+            round_name = re.sub(r"\*+", "", cols[0]).strip().upper()
+            if round_name in _ROUND_NAME_MAP:
+                topic = cols[1]
+                if topic and not re.match(r"^-+$", topic):
+                    topics_by_round.setdefault(_ROUND_NAME_MAP[round_name], []).append(topic)
+
+    for field, topics in topics_by_round.items():
+        result[field] = "; ".join(topics)
+
+    return result
+
+
 def _build_record(
     path: Path,
     *,
@@ -297,6 +381,12 @@ def _build_record(
             summary.update({key: value for key, value in llm_summary.items() if value})
         except Exception as exc:  # noqa: BLE001 - keep export usable if one summary fails
             print(f"warning: LLM summary failed for {path.name}: {exc}")
+
+    # Override round topics with pre-generated file if available — always wins over LLM/fallback
+    job_id = str(frontmatter.get("job_id") or "")
+    if job_id:
+        round_topics = _read_round_topics(job_id)
+        summary.update(round_topics)
 
     return JobRecord(
         title=str(frontmatter.get("title") or ""),
